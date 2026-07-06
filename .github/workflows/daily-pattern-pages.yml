@@ -6,7 +6,8 @@ on:
     branches:
       - main
   schedule:
-    - cron: "0 1 * * *"
+    # 08:05 Beijing time.
+    - cron: "5 0 * * *"
 
 permissions:
   contents: read
@@ -77,6 +78,15 @@ jobs:
               --failed-retry-passes 0 \
               --insecure
           fi
+          python - <<'PY'
+          import csv
+          path = "public/market_pattern_matches.csv"
+          with open(path, newline="", encoding="utf-8") as handle:
+              rows = list(csv.DictReader(handle))
+          print(f"final_scan_rows={len(rows)}")
+          if not rows:
+              raise SystemExit("No matches after API + archive fallback; refusing to deploy an empty report.")
+          PY
           python draw_market_current_logic_from_csv.py \
             --csv-file public/market_pattern_matches.csv \
             --out-dir public \

@@ -187,6 +187,7 @@ def protected_html(inner_html: str, password: str) -> str:
 
 def gated_html(inner_html: str, password_hash: str) -> str:
     escaped = inner_html.replace("</script", "<\\/script")
+    storage_key = hashlib.sha256(password_hash.strip().lower().encode("utf-8")).hexdigest()[:24]
     return f"""<!doctype html>
 <html>
 <head>
@@ -215,6 +216,7 @@ def gated_html(inner_html: str, password_hash: str) -> str:
   <template id="report-content">{escaped}</template>
   <script>
     const expectedHash = "{html.escape(password_hash.strip().lower())}";
+    const unlockKey = "b_pattern_report_unlocked_{storage_key}";
 
     function toHex(bytes) {{
       return Array.from(bytes).map((item) => item.toString(16).padStart(2, "0")).join("");
@@ -223,6 +225,14 @@ def gated_html(inner_html: str, password_hash: str) -> str:
     async function sha256(text) {{
       const bytes = new TextEncoder().encode(text);
       return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+    }}
+
+    function showReport() {{
+      document.body.innerHTML = document.getElementById("report-content").innerHTML;
+    }}
+
+    if (localStorage.getItem(unlockKey) === expectedHash) {{
+      showReport();
     }}
 
     document.getElementById("gate-form").addEventListener("submit", async (event) => {{
@@ -234,7 +244,8 @@ def gated_html(inner_html: str, password_hash: str) -> str:
         error.textContent = "密码错误";
         return;
       }}
-      document.body.innerHTML = document.getElementById("report-content").innerHTML;
+      localStorage.setItem(unlockKey, expectedHash);
+      showReport();
     }});
   </script>
 </body>
@@ -302,7 +313,18 @@ def main() -> int:
     end_ms = ms_at(end)
     context = ssl._create_unverified_context()
     candle_cache = {}
-    index_parts = ["<body style='background:#111827;color:#f9fafb;font-family:Arial'>"]
+    generated_at = dt.datetime.now(BJ).strftime("%Y-%m-%d %H:%M")
+    index_parts = [
+        "<body style='background:#111827;color:#f9fafb;font-family:Arial;padding:20px'>",
+        "<h1>Binance Pattern Report</h1>",
+        f"<p>Generated at Beijing time: {html.escape(generated_at)}</p>",
+        f"<p>Rows: {len(rows)}</p>",
+    ]
+    if not rows:
+        index_parts.append(
+            "<p style='color:#fbbf24'>本次扫描没有命中。"
+            "如果预期应该有结果，需要检查扫描 CSV 或筛选逻辑。</p>"
+        )
 
     for idx, row in enumerate(rows, start=1):
         symbol = row["symbol"]

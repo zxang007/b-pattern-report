@@ -2,6 +2,9 @@ name: Daily Binance Pattern Pages
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
   schedule:
     - cron: "0 1 * * *"
 
@@ -47,12 +50,39 @@ jobs:
             --retries 2 \
             --failed-retry-passes 0 \
             --insecure
+          if ! python - <<'PY'
+          import csv
+          path = "public/market_pattern_matches.csv"
+          with open(path, newline="", encoding="utf-8") as handle:
+              rows = list(csv.DictReader(handle))
+          print(f"api_scan_rows={len(rows)}")
+          raise SystemExit(0 if rows else 1)
+          PY
+          then
+            echo "API scan returned 0 rows; retrying with Binance archive auto source."
+            python scan_four_h_segment_arc_market.py \
+              --start-date 2026-06-01 \
+              --end-date "$(date -u +%F)" \
+              --csv-file public/market_pattern_matches.csv \
+              --symbols-file binance_futures_symbols_2026.txt \
+              --archive-granularity auto \
+              --workers 8 \
+              --executor process \
+              --progress-every 25 \
+              --archive-sleep 0 \
+              --limit 500 \
+              --per-symbol-limit 2 \
+              --timeout 20 \
+              --retries 2 \
+              --failed-retry-passes 0 \
+              --insecure
+          fi
           python draw_market_current_logic_from_csv.py \
             --csv-file public/market_pattern_matches.csv \
             --out-dir public \
             --start-date 2026-06-01 \
             --end-date "$(date -u +%F)" \
-            --archive-granularity api \
+            --archive-granularity auto \
             --timeout 8 \
             --retries 2 \
             --retry-delay 0.6 \

@@ -1,0 +1,80 @@
+name: Daily Binance Pattern Pages
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 1 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build report
+        env:
+          REPORT_PASSWORD_SHA256: "95d5676ebf51015334a1372f463731b8aa225a365642ec6108b39cd9061d8628"
+        run: |
+          mkdir -p public
+          python scan_four_h_segment_arc_market.py \
+            --start-date 2026-06-01 \
+            --end-date "$(date -u +%F)" \
+            --csv-file public/market_pattern_matches.csv \
+            --symbols-file binance_futures_symbols_2026.txt \
+            --archive-granularity api \
+            --workers 8 \
+            --executor process \
+            --progress-every 25 \
+            --archive-sleep 0 \
+            --limit 500 \
+            --per-symbol-limit 2 \
+            --timeout 8 \
+            --retries 2 \
+            --failed-retry-passes 0 \
+            --insecure
+          python draw_market_current_logic_from_csv.py \
+            --csv-file public/market_pattern_matches.csv \
+            --out-dir public \
+            --start-date 2026-06-01 \
+            --end-date "$(date -u +%F)" \
+            --archive-granularity api \
+            --timeout 8 \
+            --retries 2 \
+            --retry-delay 0.6 \
+            --password-hash "$REPORT_PASSWORD_SHA256" \
+            --insecure
+          touch public/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

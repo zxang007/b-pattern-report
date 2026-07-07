@@ -467,9 +467,9 @@ def main() -> int:
     rows = sorted(
         rows,
         key=lambda item: (
-            segment_scan.structure_rank_key(item),
-            item.wash_start.open_time,
             item.symbol,
+            item.wash_start.open_time,
+            segment_scan.structure_rank_key(item),
         ),
     )[: args.limit]
     write_rows(args.csv_file, rows)

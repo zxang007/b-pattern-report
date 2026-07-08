@@ -75,6 +75,14 @@ def row_to_match(row: dict[str, str], candles_by_time: dict[int, object]) -> sca
     )
 
 
+def row_sort_key(row: dict[str, str]) -> tuple[str, str, str]:
+    return (
+        row.get("symbol", ""),
+        row.get("wash_start_bj", ""),
+        row.get("wash_end_bj", ""),
+    )
+
+
 def xor_stream(data: bytes, password: str, salt: bytes) -> bytes:
     key = password.encode("utf-8")
     output = bytearray()
@@ -305,7 +313,7 @@ def main() -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(exist_ok=True)
     with open(args.csv_file, newline="", encoding="utf-8") as file:
-        rows = list(csv.DictReader(file))
+        rows = sorted(csv.DictReader(file), key=row_sort_key)
 
     start = dt.date.fromisoformat(args.start_date)
     end = dt.date.fromisoformat(args.end_date) + dt.timedelta(days=1)

@@ -58,6 +58,12 @@ jobs:
           path = "public/market_pattern_matches.csv"
           with open(path, newline="", encoding="utf-8") as handle:
               rows = list(csv.DictReader(handle))
+              fieldnames = handle.fieldnames
+          rows.sort(key=lambda row: (row.get("symbol", ""), row.get("wash_start_bj", ""), row.get("wash_end_bj", "")))
+          with open(path, "w", newline="", encoding="utf-8") as handle:
+              writer = csv.DictWriter(handle, fieldnames=fieldnames)
+              writer.writeheader()
+              writer.writerows(rows)
           print(f"final_scan_rows={len(rows)}")
           if not rows:
               raise SystemExit("No matches after API + archive fallback; refusing to deploy an empty report.")

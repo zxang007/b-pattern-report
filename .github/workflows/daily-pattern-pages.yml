@@ -35,9 +35,12 @@ jobs:
           REPORT_PASSWORD_SHA256: "95d5676ebf51015334a1372f463731b8aa225a365642ec6108b39cd9061d8628"
         run: |
           mkdir -p public
+          SCAN_START_DATE="$(python3 -c 'import datetime as d; now=d.datetime.now(d.timezone(d.timedelta(hours=8))).date(); y=now.year; m=now.month-2; y-=1 if m<=0 else 0; m+=12 if m<=0 else 0; print(d.date(y,m,15).isoformat())')"
+          SCAN_END_DATE="$(python3 -c 'import datetime as d; print(d.datetime.now(d.timezone(d.timedelta(hours=8))).date().isoformat())')"
+          echo "scan_window=${SCAN_START_DATE}..${SCAN_END_DATE}"
           python scan_four_h_segment_arc_market.py \
-            --start-date 2026-06-01 \
-            --end-date "$(date -u +%F)" \
+            --start-date "$SCAN_START_DATE" \
+            --end-date "$SCAN_END_DATE" \
             --csv-file public/market_pattern_matches.csv \
             --symbols-file futures_symbols_2026.txt \
             --archive-granularity auto \
@@ -62,8 +65,8 @@ jobs:
           python draw_market_current_logic_from_csv.py \
             --csv-file public/market_pattern_matches.csv \
             --out-dir public \
-            --start-date 2026-06-01 \
-            --end-date "$(date -u +%F)" \
+            --start-date "$SCAN_START_DATE" \
+            --end-date "$SCAN_END_DATE" \
             --archive-granularity auto \
             --timeout 8 \
             --retries 2 \

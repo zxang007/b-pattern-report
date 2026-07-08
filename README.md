@@ -18,4 +18,10 @@ After the first successful run, the phone-readable page will be:
 
 `https://<github-username>.github.io/<repo-name>/`
 
-The workflow schedule is `01:00 UTC`, which is `09:00 Beijing time`.
+The daily report scans the static `futures_symbols_2026.txt` file.
+
+The daily report workflow runs at `00:05 UTC`, which is `08:05 Beijing time`.
+The symbols file is updated by a separate monthly workflow near Beijing month-end.
+That workflow refuses to write or commit if the fetched list is empty or has fewer
+than 400 symbols, and it only commits real list changes with the fixed message
+`Update futures symbols`.

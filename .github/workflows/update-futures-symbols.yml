@@ -1,0 +1,75 @@
+name: Monthly Futures Symbols Update
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 23:10 Beijing time on possible month-end dates. The job below skips non-month-end dates.
+    - cron: "10 15 28-31 * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: futures-symbols
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Month-end guard
+        id: month_end
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run_update=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(TZ=Asia/Shanghai date -d tomorrow +%d)" = "01" ]; then
+            echo "run_update=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not Beijing month end; skipping."
+            echo "run_update=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.month_end.outputs.run_update == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.month_end.outputs.run_update == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Update futures symbols file
+        if: steps.month_end.outputs.run_update == 'true'
+        run: |
+          python update_futures_symbols.py \
+            --symbols-file futures_symbols_2026.txt \
+            --min-symbol-count 400 \
+            --timeout 20 \
+            --retries 3 \
+            --retry-delay 1 \
+            --insecure
+
+      - name: Commit symbol changes
+        if: steps.month_end.outputs.run_update == 'true'
+        run: |
+          if [ ! -s futures_symbols_2026.txt ]; then
+            echo "Refusing to commit: futures_symbols_2026.txt is empty."
+            exit 1
+          fi
+          count="$(grep -cve '^[[:space:]]*$' futures_symbols_2026.txt || true)"
+          if [ "$count" -lt 400 ]; then
+            echo "Refusing to commit: only $count symbols."
+            exit 1
+          fi
+          if git diff --quiet -- futures_symbols_2026.txt; then
+            echo "No symbol changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add futures_symbols_2026.txt
+          git commit -m "Update futures symbols"
+          git push

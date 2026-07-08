@@ -163,12 +163,12 @@ def parse_archive_csv(text: str, start_ms: int | None = None, end_ms: int | None
     return candles
 
 
-def fetch_archive_text(url: str, context: ssl.SSLContext, timeout: float = 25) -> str | None:
+def fetch_archive_text(url: str, context: ssl.SSLContext) -> str | None:
     if url in ARCHIVE_TEXT_CACHE:
         return ARCHIVE_TEXT_CACHE[url]
     request_url = urllib.parse.quote(url, safe=":/?&=%")
     try:
-        with urllib.request.urlopen(request_url, timeout=timeout, context=context) as response:
+        with urllib.request.urlopen(request_url, timeout=25, context=context) as response:
             body = response.read()
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
@@ -181,24 +181,24 @@ def fetch_archive_text(url: str, context: ssl.SSLContext, timeout: float = 25) -
     return text
 
 
-def load_monthly(symbol: str, interval: str, start_year: int, end_date: dt.date, context: ssl.SSLContext, timeout: float = 25) -> list[base.Candle]:
+def load_monthly(symbol: str, interval: str, start_year: int, end_date: dt.date, context: ssl.SSLContext) -> list[base.Candle]:
     candles = []
     for year, month in month_iter(start_year, end_date):
         url = f"{ARCHIVE_BASE_URL}/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{year}-{month:02d}.zip"
-        text = fetch_archive_text(url, context, timeout)
+        text = fetch_archive_text(url, context)
         if text is not None:
             candles.extend(parse_archive_csv(text))
     return sorted({item.open_time: item for item in candles}.values(), key=lambda item: item.open_time)
 
 
-def load_daily(symbol: str, interval: str, start_ms: int, end_ms: int, context: ssl.SSLContext, timeout: float = 25) -> list[base.Candle]:
+def load_daily(symbol: str, interval: str, start_ms: int, end_ms: int, context: ssl.SSLContext) -> list[base.Candle]:
     candles = []
     start = dt.datetime.fromtimestamp(start_ms / 1000, tz=dt.timezone.utc).date()
     end = dt.datetime.fromtimestamp(end_ms / 1000, tz=dt.timezone.utc).date()
     day = start
     while day <= end:
         url = f"{ARCHIVE_BASE_URL}/daily/klines/{symbol}/{interval}/{symbol}-{interval}-{day.isoformat()}.zip"
-        text = fetch_archive_text(url, context, timeout)
+        text = fetch_archive_text(url, context)
         if text is not None:
             candles.extend(parse_archive_csv(text, start_ms, end_ms))
         day += dt.timedelta(days=1)

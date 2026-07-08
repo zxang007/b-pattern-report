@@ -126,9 +126,13 @@ def departure_indexes(
     candles: list[base.Candle],
     wash_start_i: int,
     hold_line: Decimal,
+    max_wash_bars: int | None = None,
 ) -> list[int]:
     indexes: list[int] = []
-    for index in range(wash_start_i + 1, len(candles)):
+    end_i = len(candles)
+    if max_wash_bars is not None:
+        end_i = min(end_i, wash_start_i + max(1, max_wash_bars) + 1)
+    for index in range(wash_start_i + 1, end_i):
         segment = candles[wash_start_i:index]
         if any(candle.close < hold_line for candle in segment):
             return indexes
@@ -368,7 +372,26 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
     if local_start_i >= yellow_end_i:
         local_start_i = start_i
     low_close_i = min(range(local_start_i, yellow_end_i), key=lambda i: candles[i].close)
-    return min(low_close_i + 1, yellow_end_i)
+    base_start_i = min(low_close_i + 1, yellow_end_i)
+    if base_start_i < yellow_end_i:
+        base_close = candles[base_start_i].close
+        dipped_after_base = False
+        for index in range(base_start_i + 1, yellow_end_i):
+            candle = candles[index]
+            if candle.close < base_close:
+                dipped_after_base = True
+                continue
+            if not dipped_after_base:
+                continue
+            prefix = candles[base_start_i:index]
+            prefix_high = max(item.high for item in prefix)
+            if (
+                candle.close > prefix_high
+                and candle.close > candle.open
+                and candle.quote_volume >= median_quote_volume(prefix)
+            ):
+                return index
+    return base_start_i
 
 
 def structure_rank_key(match: SegmentArcMatch) -> tuple[Decimal, Decimal, int, Decimal, Decimal, Decimal, Decimal]:
@@ -388,7 +411,10 @@ def structure_rank_key(match: SegmentArcMatch) -> tuple[Decimal, Decimal, int, D
 
 
 def keep_rally_candidates(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:
-    best_by_structure: dict[tuple[int, int, int, int, Decimal], SegmentArcMatch] = {}
+    grouped: dict[
+        tuple[int, int, int, int, Decimal],
+        dict[int, tuple[int, SegmentArcMatch]],
+    ] = {}
     for match in matches:
         key = (
             match.yellow_peak.open_time,
@@ -398,13 +424,19 @@ def keep_rally_candidates(matches: list[SegmentArcMatch]) -> list[SegmentArcMatc
             match.wash_end.open_time,
             match.hold_line,
         )
-        current = best_by_structure.get(key)
-        if current is None:
-            best_by_structure[key] = match
-            continue
-        if match.yellow_start.open_time < current.yellow_start.open_time:
-            best_by_structure[key] = match
-    return list(best_by_structure.values())
+        by_start = grouped.setdefault(key, {})
+        start_key = match.yellow_start.open_time
+        count, representative = by_start.get(start_key, (0, match))
+        by_start[start_key] = (count + 1, representative)
+
+    kept: list[SegmentArcMatch] = []
+    for by_start in grouped.values():
+        _, representative = max(
+            by_start.values(),
+            key=lambda item: (item[0], -item[1].yellow_start.open_time),
+        )
+        kept.append(representative)
+    return kept
 
 
 def keep_tightest_hold_for_wash(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:
@@ -536,9 +568,14 @@ def remove_dominated_substructures(matches: list[SegmentArcMatch]) -> list[Segme
 def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespace) -> list[SegmentArcMatch]:
     matches: list[SegmentArcMatch] = []
     n = len(candles)
+    max_market_yellow_bars = getattr(args, "max_market_yellow_bars", None)
+    max_market_blue_bars = getattr(args, "max_market_blue_bars", None)
+    max_market_wash_bars = getattr(args, "max_market_wash_bars", None)
 
     for yellow_start_i in range(0, n - 3):
         blue_start_max = n - 3
+        if max_market_yellow_bars is not None:
+            blue_start_max = min(blue_start_max, yellow_start_i + max(1, max_market_yellow_bars))
         for blue_start_i in range(yellow_start_i + 1, blue_start_max + 1):
             yellow_end_i = blue_start_i - 1
             effective_yellow_peak_i = yellow_end_i
@@ -557,6 +594,8 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                 continue
 
             breakout_max = n - 2
+            if max_market_blue_bars is not None:
+                breakout_max = min(breakout_max, blue_start_i + max(1, max_market_blue_bars))
             for breakout_i in range(blue_start_i + 1, breakout_max + 1):
                 probe_blue_low_i = min(range(blue_start_i, breakout_i + 1), key=lambda i: candles[i].low)
                 effective_blue_start_i = blue_start_i
@@ -596,7 +635,6 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                 if has_failed_reclaim_before(candles, blue_low_i, breakout_i, hold_line):
                     continue
                 blue_region = candles[effective_blue_start_i : breakout_i + 1]
-                max_market_blue_bars = getattr(args, "max_market_blue_bars", None)
                 if max_market_blue_bars is not None and len(blue_region) > max_market_blue_bars:
                     continue
                 blue_below_close_count = sum(1 for candle in blue_region if candle.close < hold_line)
@@ -617,7 +655,7 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                 if wash_start.close < hold_line:
                     continue
 
-                departures = departure_indexes(candles, wash_start_i, hold_line)
+                departures = departure_indexes(candles, wash_start_i, hold_line, max_market_wash_bars)
                 for departure_pos, departure_i in enumerate(departures):
                     has_later_departure = departure_pos < len(departures) - 1
                     if (
@@ -630,7 +668,6 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                     min_market_wash_bars = getattr(args, "min_market_wash_bars", None)
                     if min_market_wash_bars is not None and len(wash) < min_market_wash_bars:
                         continue
-                    max_market_wash_bars = getattr(args, "max_market_wash_bars", None)
                     if max_market_wash_bars is not None and len(wash) > max_market_wash_bars:
                         continue
                     ok, wash_min_close, wash_peak = is_valid_wash(wash, hold_line, args)

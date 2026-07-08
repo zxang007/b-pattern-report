@@ -42,7 +42,6 @@ jobs:
             --symbols-file futures_symbols_2026.txt \
             --archive-granularity auto \
             --workers 8 \
-            --executor process \
             --progress-every 25 \
             --archive-sleep 0 \
             --limit 500 \

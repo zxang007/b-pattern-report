@@ -17,7 +17,7 @@ import screen_aria_4h_pattern as live
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="批量扫描合约市场 4小时区域结构。")
+    parser = argparse.ArgumentParser(description="批量扫描 Binance USDⓈ-M 永续 4小时区域结构。")
     parser.add_argument("--quote", default="USDT")
     parser.add_argument("--symbols", help="只扫描指定交易对，逗号分隔，例如 ARIAUSDT,VINEUSDT。")
     parser.add_argument("--symbols-file", help="从本地文件读取交易对，每行一个 symbol。用于 Railway 等无法访问 exchangeInfo 的环境。")
@@ -26,10 +26,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--per-symbol-limit", type=int, default=5, help="每个币最多输出多少个候选，默认 5。")
     parser.add_argument("--limit", type=int, default=300, help="总输出候选上限，默认 300。")
     parser.add_argument("--csv-file", default="four_h_segment_arc_market_matches.csv")
+    parser.add_argument("--failed-symbols-file", help="把本轮仍未完成的交易对写入文件，便于补扫。默认用 CSV 文件名加 .failed.txt。")
     parser.add_argument("--archive-granularity", choices=("api", "auto", "monthly", "daily"), default="auto", help="K线来源：api=实时K线接口；auto=完整月份 monthly、未结束月份 daily。")
     parser.add_argument("--archive-sleep", type=float, default=0.12, help="每个交易对扫描后暂停秒数，默认 0.12。")
-    parser.add_argument("--workers", type=int, default=1, help="并发扫描线程数，默认 1。使用 archive 时可适当提高。")
-    parser.add_argument("--executor", choices=("thread", "process"), default="thread", help="并发执行器：thread 适合网络瓶颈，process 适合当前 CPU 形态扫描，默认 thread。")
+    parser.add_argument("--workers", type=int, default=1, help="并发扫描线程数，默认 1。使用 Binance archive 时可适当提高。")
     parser.add_argument("--progress-every", type=int, default=1, help="无命中进度每多少个交易对打印一次，默认 1。命中和错误始终打印。")
     parser.add_argument("--max-symbols", type=int, default=0, help="最多扫描多少个交易对，0 表示全部。")
     parser.add_argument("--include-multiplier-symbols", action="store_true", help="包含 1000/1000000 等面值倍数合约，默认自动市场扫描时排除。")
@@ -104,6 +104,7 @@ def scan_args(args: argparse.Namespace) -> argparse.Namespace:
     return argparse.Namespace(
         sort=args.sort,
         min_blue_drop_pct=args.min_blue_drop_pct,
+        max_market_yellow_bars=args.max_market_yellow_bars,
         max_market_blue_bars=args.max_market_blue_bars,
         max_blue_below_close_count=args.max_blue_below_close_count,
         min_market_wash_bars=args.min_market_wash_bars,
@@ -158,7 +159,7 @@ def load_archive_candles(
         return live.load_candles(symbol, interval, start_ms, end_ms, api_args, limit=1500)
 
     if granularity == "daily":
-        return archive.load_daily(symbol, interval, start_ms, end_ms, context, timeout)
+        return archive.load_daily(symbol, interval, start_ms, end_ms, context)
 
     candles: list[live.Candle] = []
     inclusive_end = end - dt.timedelta(days=1)
@@ -178,12 +179,11 @@ def load_archive_candles(
                     segment_scan.ms_at(range_start),
                     segment_scan.ms_at(range_end + dt.timedelta(days=1)),
                     context,
-                    timeout,
                 )
             )
             continue
         url = f"{archive.ARCHIVE_BASE_URL}/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{year}-{month:02d}.zip"
-        text = archive.fetch_archive_text(url, context, timeout)
+        text = archive.fetch_archive_text(url, context)
         if text is not None:
             candles.extend(archive.parse_archive_csv(text, start_ms, end_ms))
     return sorted({item.open_time: item for item in candles}.values(), key=lambda item: item.open_time)
@@ -198,7 +198,7 @@ def dedupe(matches: list[segment_scan.SegmentArcMatch], cluster_gap_bars: int = 
             match.wash_end.open_time,
         )
         current = best.get(key)
-        if current is None or segment_scan.structure_rank_key(match) < segment_scan.structure_rank_key(current):
+        if current is None or market_rank_key(match) < market_rank_key(current):
             best[key] = match
     collapsed = sorted(best.values(), key=lambda item: (item.symbol, item.yellow_start.open_time, item.wash_end.open_time))
     gap_ms = max(0, cluster_gap_bars) * 4 * 60 * 60 * 1000
@@ -208,7 +208,7 @@ def dedupe(matches: list[segment_scan.SegmentArcMatch], cluster_gap_bars: int = 
     current_symbol = ""
 
     def choose_cluster(items: list[segment_scan.SegmentArcMatch]) -> segment_scan.SegmentArcMatch:
-        return min(items, key=lambda item: (item.yellow_start.open_time, segment_scan.structure_rank_key(item)))
+        return min(items, key=market_rank_key)
 
     for match in collapsed:
         start = match.yellow_start.open_time
@@ -273,6 +273,24 @@ def wash_wick_boundary_score(match: segment_scan.SegmentArcMatch) -> Decimal:
     upper = wick_ratio(match.wash_start, "upper")
     lower = wick_ratio(match.wash_end, "lower")
     return (upper + lower) * Decimal("10")
+
+
+def market_rank_key(match: segment_scan.SegmentArcMatch) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal, int]:
+    volume_penalty = Decimal("1") / (match.breakout_volume_ratio + Decimal("1"))
+    hold_gap = abs(segment_scan.wash_hold_gap_pct(match))
+    wash_height = segment_scan.pct(match.wash_peak, match.wash_min_close)
+    blue_drop = segment_scan.blue_drop_abs_pct(match)
+    wash_vs_blue_penalty = wash_height / blue_drop if blue_drop > 0 else wash_height
+    volume_component = volume_penalty * Decimal("10")
+    structure_score = hold_gap + wash_vs_blue_penalty * wash_vs_blue_penalty + volume_component
+    return (
+        structure_score,
+        hold_gap,
+        wash_height,
+        wash_vs_blue_penalty,
+        volume_penalty,
+        match.yellow_start.open_time,
+    )
 
 
 def write_rows(path: str, rows: list[segment_scan.SegmentArcMatch]) -> None:
@@ -372,7 +390,7 @@ def scan_symbol(
             matches = sorted(
                 matches,
                 key=lambda item: (
-                    segment_scan.structure_rank_key(item),
+                    market_rank_key(item),
                     item.wash_start.open_time,
                 ),
             )
@@ -392,16 +410,13 @@ def record_result(
     raw_count: int,
     error: str | None,
     progress_every: int,
-    completed: int | None = None,
 ) -> bool:
-    prefix = f"[{completed}/{total} done; index {index}]" if completed is not None else f"[{index}/{total}]"
     if error:
-        print(f"{prefix} {symbol}: error={error}", file=sys.stderr, flush=True)
         return False
     if selected:
-        print(f"{prefix} {symbol}: {len(selected)} raw={raw_count}", flush=True)
-    elif (completed if completed is not None else index) % progress_every == 0:
-        print(f"{prefix} {symbol}: 0 raw={raw_count}", file=sys.stderr, flush=True)
+        print(f"[{index}/{total}] {symbol}: {len(selected)} raw={raw_count}", flush=True)
+    elif index % progress_every == 0:
+        print(f"[{index}/{total}] {symbol}: 0 raw={raw_count}", file=sys.stderr, flush=True)
     return True
 
 
@@ -430,19 +445,16 @@ def main() -> int:
             if args.archive_sleep > 0:
                 time.sleep(args.archive_sleep)
     else:
-        executor_class = concurrent.futures.ProcessPoolExecutor if args.executor == "process" else concurrent.futures.ThreadPoolExecutor
-        with executor_class(max_workers=workers) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(scan_symbol, index, len(symbols), info, args, start, end, start_ms, end_ms, params)
                 for index, info in enumerate(symbols, start=1)
             }
             info_by_symbol = {info.symbol: info for info in symbols}
-            completed = 0
             for future in concurrent.futures.as_completed(futures):
-                completed += 1
                 index, symbol, selected, raw_count, error = future.result()
                 rows.extend(selected)
-                if not record_result(index, len(symbols), symbol, selected, raw_count, error, progress_every, completed):
+                if not record_result(index, len(symbols), symbol, selected, raw_count, error, progress_every):
                     failed.append(info_by_symbol[symbol])
                 if args.archive_sleep > 0:
                     time.sleep(args.archive_sleep)
@@ -463,13 +475,17 @@ def main() -> int:
 
     if failed:
         print("unfinished_symbols=" + ",".join(info.symbol for info in failed), file=sys.stderr, flush=True)
+    failed_path = args.failed_symbols_file or f"{args.csv_file}.failed.txt"
+    with open(failed_path, "w", encoding="utf-8") as file:
+        for info in failed:
+            file.write(info.symbol + "\n")
 
     rows = sorted(
         rows,
         key=lambda item: (
-            item.symbol,
+            market_rank_key(item),
             item.wash_start.open_time,
-            segment_scan.structure_rank_key(item),
+            item.symbol,
         ),
     )[: args.limit]
     write_rows(args.csv_file, rows)

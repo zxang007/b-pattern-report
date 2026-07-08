@@ -96,7 +96,7 @@ def protected_html(inner_html: str, password: str) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Binance Pattern Report</title>
+  <title>Market Pattern Report</title>
   <style>
     body {{ margin: 0; min-height: 100vh; background: #111827; color: #f9fafb; font-family: Arial, sans-serif; }}
     .gate {{ min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }}
@@ -110,7 +110,7 @@ def protected_html(inner_html: str, password: str) -> str:
 <body>
   <div class="gate">
     <form class="panel" id="gate-form">
-      <h1>Binance Pattern Report</h1>
+      <h1>Market Pattern Report</h1>
       <input id="password" type="password" autocomplete="current-password" placeholder="输入密码">
       <button type="submit">打开</button>
       <div class="error" id="error"></div>
@@ -193,7 +193,7 @@ def gated_html(inner_html: str, password_hash: str) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Binance Pattern Report</title>
+  <title>Market Pattern Report</title>
   <style>
     body {{ margin: 0; min-height: 100vh; background: #111827; color: #f9fafb; font-family: Arial, sans-serif; }}
     .gate {{ min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }}
@@ -207,7 +207,7 @@ def gated_html(inner_html: str, password_hash: str) -> str:
 <body>
   <div class="gate">
     <form class="panel" id="gate-form">
-      <h1>Binance Pattern Report</h1>
+      <h1>Market Pattern Report</h1>
       <input id="password" type="password" autocomplete="current-password" placeholder="输入密码">
       <button type="submit">打开</button>
       <div class="error" id="error"></div>
@@ -316,7 +316,7 @@ def main() -> int:
     generated_at = dt.datetime.now(BJ).strftime("%Y-%m-%d %H:%M")
     index_parts = [
         "<body style='background:#111827;color:#f9fafb;font-family:Arial;padding:20px'>",
-        "<h1>Binance Pattern Report</h1>",
+        "<h1>Market Pattern Report</h1>",
         f"<p>Generated at Beijing time: {html.escape(generated_at)}</p>",
         f"<p>Rows: {len(rows)}</p>",
     ]

@@ -1,4 +1,4 @@
-name: Daily Binance Pattern Pages
+name: Daily Market Pattern Pages
 
 on:
   workflow_dispatch:
@@ -39,7 +39,7 @@ jobs:
             --start-date 2026-06-01 \
             --end-date "$(date -u +%F)" \
             --csv-file public/market_pattern_matches.csv \
-            --symbols-file binance_futures_symbols_2026.txt \
+            --symbols-file futures_symbols_2026.txt \
             --archive-granularity auto \
             --workers 8 \
             --executor process \

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-import binance_archive_pattern_scan as archive
+import market_archive_pattern_scan as archive
 import screen_aria_4h_pattern as base
 
 

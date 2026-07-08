@@ -11,13 +11,13 @@ import sys
 import time
 from decimal import Decimal
 
-import binance_archive_pattern_scan as archive
+import market_archive_pattern_scan as archive
 import four_h_segment_arc_scan as segment_scan
 import screen_aria_4h_pattern as live
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="批量扫描 Binance USDⓈ-M 永续 4小时区域结构。")
+    parser = argparse.ArgumentParser(description="批量扫描合约市场 4小时区域结构。")
     parser.add_argument("--quote", default="USDT")
     parser.add_argument("--symbols", help="只扫描指定交易对，逗号分隔，例如 ARIAUSDT,VINEUSDT。")
     parser.add_argument("--symbols-file", help="从本地文件读取交易对，每行一个 symbol。用于 Railway 等无法访问 exchangeInfo 的环境。")
@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--csv-file", default="four_h_segment_arc_market_matches.csv")
     parser.add_argument("--archive-granularity", choices=("api", "auto", "monthly", "daily"), default="auto", help="K线来源：api=实时K线接口；auto=完整月份 monthly、未结束月份 daily。")
     parser.add_argument("--archive-sleep", type=float, default=0.12, help="每个交易对扫描后暂停秒数，默认 0.12。")
-    parser.add_argument("--workers", type=int, default=1, help="并发扫描线程数，默认 1。使用 Binance archive 时可适当提高。")
+    parser.add_argument("--workers", type=int, default=1, help="并发扫描线程数，默认 1。使用 archive 时可适当提高。")
     parser.add_argument("--executor", choices=("thread", "process"), default="thread", help="并发执行器：thread 适合网络瓶颈，process 适合当前 CPU 形态扫描，默认 thread。")
     parser.add_argument("--progress-every", type=int, default=1, help="无命中进度每多少个交易对打印一次，默认 1。命中和错误始终打印。")
     parser.add_argument("--max-symbols", type=int, default=0, help="最多扫描多少个交易对，0 表示全部。")

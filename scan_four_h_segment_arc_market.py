@@ -390,8 +390,10 @@ def scan_symbol(
             matches = sorted(
                 matches,
                 key=lambda item: (
+                    -item.wash_end.open_time,
+                    -item.wash_start.open_time,
+                    item.symbol,
                     market_rank_key(item),
-                    item.wash_start.open_time,
                 ),
             )
             return index, info.symbol, matches[: args.per_symbol_limit], len(raw_matches), None
@@ -483,9 +485,10 @@ def main() -> int:
     rows = sorted(
         rows,
         key=lambda item: (
-            market_rank_key(item),
-            item.wash_start.open_time,
+            -item.wash_end.open_time,
+            -item.wash_start.open_time,
             item.symbol,
+            market_rank_key(item),
         ),
     )[: args.limit]
     write_rows(args.csv_file, rows)

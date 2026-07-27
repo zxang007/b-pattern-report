@@ -390,10 +390,10 @@ def scan_symbol(
             matches = sorted(
                 matches,
                 key=lambda item: (
+                    market_rank_key(item),
                     -item.wash_end.open_time,
                     -item.wash_start.open_time,
                     item.symbol,
-                    market_rank_key(item),
                 ),
             )
             return index, info.symbol, matches[: args.per_symbol_limit], len(raw_matches), None

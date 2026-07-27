@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--progress-every", type=int, default=1, help="无命中进度每多少个交易对打印一次，默认 1。命中和错误始终打印。")
     parser.add_argument("--max-symbols", type=int, default=0, help="最多扫描多少个交易对，0 表示全部。")
     parser.add_argument("--include-multiplier-symbols", action="store_true", help="包含 1000/1000000 等面值倍数合约，默认自动市场扫描时排除。")
-    parser.add_argument("--merge-cluster-gap-bars", type=int, default=0, help="同币候选只默认合并互相重叠的结构；需要时可指定额外相邻合并4h根数。")
+    parser.add_argument("--merge-cluster-gap-bars", type=int, default=0, help="同币候选默认只合并相同蓝低点和洗盘终点；大于0时再合并重叠或相邻结构。")
     parser.add_argument("--sort", choices=("time", "score", "compact", "quality"), default="quality")
     parser.add_argument("--min-blue-drop-pct", type=Decimal, default=Decimal("6.0"), help="蓝色下杀低点相对黄色 hold 收盘价的最小跌幅，默认 6%。")
     parser.add_argument("--max-market-yellow-bars", type=int, default=48, help="市场扫描里黄色拉升区总跨度上限，避免把长周期横盘/慢涨当成拉升，默认 48。")
@@ -201,6 +201,8 @@ def dedupe(matches: list[segment_scan.SegmentArcMatch], cluster_gap_bars: int = 
         if current is None or market_rank_key(match) < market_rank_key(current):
             best[key] = match
     collapsed = sorted(best.values(), key=lambda item: (item.symbol, item.yellow_start.open_time, item.wash_end.open_time))
+    if cluster_gap_bars <= 0:
+        return collapsed
     gap_ms = max(0, cluster_gap_bars) * 4 * 60 * 60 * 1000
     clustered: list[segment_scan.SegmentArcMatch] = []
     cluster: list[segment_scan.SegmentArcMatch] = []

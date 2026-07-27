@@ -442,16 +442,7 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
     if local_start_i >= yellow_end_i:
         local_start_i = start_i
     low_close_i = min(range(local_start_i, yellow_end_i), key=lambda i: candles[i].close)
-    base_start_i = min(low_close_i + 1, yellow_end_i)
-    if base_start_i < yellow_end_i:
-        suffix_low_close = candles[yellow_end_i - 1].close
-        for index in range(yellow_end_i - 2, base_start_i - 1, -1):
-            candle = candles[index]
-            if candle.close <= suffix_low_close and is_coherent_yellow_rally(candles[index : yellow_end_i + 1]):
-                return index
-            if candle.close < suffix_low_close:
-                suffix_low_close = candle.close
-    return base_start_i
+    return min(low_close_i + 1, yellow_end_i)
 
 
 def structure_rank_key(match: SegmentArcMatch) -> tuple[Decimal, Decimal, int, Decimal, Decimal, Decimal, Decimal]:
@@ -691,8 +682,6 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                 ):
                     continue
                 if not is_blue_breakout_end(candles, breakout_i, hold_line, args, blue_before_breakout):
-                    continue
-                if has_failed_reclaim_before(candles, blue_low_i, breakout_i, hold_line):
                     continue
                 blue_region = candles[effective_blue_start_i : breakout_i + 1]
                 if max_market_blue_bars is not None and len(blue_region) > max_market_blue_bars:

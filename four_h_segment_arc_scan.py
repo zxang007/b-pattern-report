@@ -298,6 +298,16 @@ def has_failed_reclaim_before(
     return False
 
 
+def first_wash_start_after_reclaim(candles: list[base.Candle], reclaim_i: int, hold_line: Decimal) -> int | None:
+    """The reclaim candle completes the blue recovery; wash starts only after it holds."""
+    wash_start_i = reclaim_i + 1
+    if wash_start_i >= len(candles):
+        return None
+    if candles[wash_start_i].close < hold_line:
+        return None
+    return wash_start_i
+
+
 def post_departure_confirms_wash_peak(
     candles: list[base.Candle],
     departure_i: int,
@@ -648,12 +658,10 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                     else Decimal("0")
                 )
 
-                wash_start_i = breakout_i
-                if wash_start_i >= n - 1:
+                wash_start_i = first_wash_start_after_reclaim(candles, breakout_i, hold_line)
+                if wash_start_i is None or wash_start_i >= n - 1:
                     continue
                 wash_start = candles[wash_start_i]
-                if wash_start.close < hold_line:
-                    continue
 
                 departures = departure_indexes(candles, wash_start_i, hold_line, max_market_wash_bars)
                 for departure_pos, departure_i in enumerate(departures):

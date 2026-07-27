@@ -360,13 +360,12 @@ def has_failed_reclaim_before(
 
 
 def first_wash_start_after_reclaim(candles: list[base.Candle], reclaim_i: int, hold_line: Decimal) -> int | None:
-    """The reclaim candle completes the blue recovery; wash starts only after it holds."""
-    wash_start_i = reclaim_i + 1
-    if wash_start_i >= len(candles):
+    """The reclaim candle is part of wash once it closes back above the rally hold line."""
+    if reclaim_i >= len(candles):
         return None
-    if candles[wash_start_i].close < hold_line:
+    if candles[reclaim_i].close < hold_line:
         return None
-    return wash_start_i
+    return reclaim_i
 
 
 def post_departure_confirms_wash_peak(
@@ -438,6 +437,7 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
     if base_start_i < yellow_end_i:
         base_close = candles[base_start_i].close
         dipped_after_base = False
+        final_lift_i: int | None = None
         for index in range(base_start_i + 1, yellow_end_i):
             candle = candles[index]
             if candle.close < base_close:
@@ -446,23 +446,15 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
             if not dipped_after_base:
                 continue
             prefix = candles[base_start_i:index]
-            prefix_high = max(item.close for item in prefix)
+            prefix_high = max(item.high for item in prefix)
             if (
                 candle.close > prefix_high
                 and candle.close > candle.open
                 and candle.quote_volume >= median_quote_volume(prefix)
             ):
-                return index
-        for index in range(base_start_i + 1, yellow_end_i):
-            candle = candles[index]
-            prefix = candles[base_start_i:index]
-            prefix_high = max(item.close for item in prefix)
-            if (
-                candle.close > prefix_high
-                and candle.close > candle.open
-                and candle.quote_volume >= median_quote_volume(prefix)
-            ):
-                return index
+                final_lift_i = index
+        if final_lift_i is not None:
+            return final_lift_i
     return base_start_i
 
 

@@ -190,12 +190,15 @@ def load_archive_candles(
 
 
 def dedupe(matches: list[segment_scan.SegmentArcMatch], cluster_gap_bars: int = 6) -> list[segment_scan.SegmentArcMatch]:
-    best: dict[tuple[str, int, int], segment_scan.SegmentArcMatch] = {}
+    best: dict[tuple[str, int, int, int, int, Decimal], segment_scan.SegmentArcMatch] = {}
     for match in matches:
         key = (
             match.symbol,
+            match.yellow_peak.open_time,
             match.blue_low.open_time,
+            match.wash_start.open_time,
             match.wash_end.open_time,
+            match.hold_line,
         )
         current = best.get(key)
         if current is None or market_rank_key(match) < market_rank_key(current):

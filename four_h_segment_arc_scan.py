@@ -140,8 +140,8 @@ def departure_indexes(
         if candle.close < hold_line:
             return indexes
         current_peak_close = max(item.close for item in segment)
-        typical_wash_volume = median_quote_volume(segment)
-        volume_departure = candle.quote_volume > typical_wash_volume and candle.close > current_peak_close
+        wash_max_volume = max(item.quote_volume for item in segment)
+        volume_departure = candle.quote_volume >= wash_max_volume and candle.close > current_peak_close
         if volume_departure:
             indexes.append(index)
     return indexes
@@ -743,15 +743,7 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                         )
 
     matches = remove_yellow_covering_wash(matches)
-    matches = remove_preempted_broad_matches(matches)
     matches = resolve_blue_inside_wash_conflicts(matches)
-    matches = remove_dominated_substructures(matches)
-    matches = keep_rally_candidates(matches)
-    matches = keep_tightest_hold_for_wash(matches)
-    matches = remove_yellow_covering_wash(matches)
-    matches = remove_nested_substructures(matches)
-    matches = resolve_blue_inside_wash_conflicts(matches)
-    matches = remove_dominated_substructures(matches)
     sort_mode = getattr(args, "sort", "time")
     if sort_mode == "score":
         return sorted(matches, key=lambda m: m.score, reverse=True)

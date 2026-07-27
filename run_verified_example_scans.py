@@ -83,7 +83,7 @@ def main() -> int:
             "--limit",
             "200",
             "--per-symbol-limit",
-            "20",
+            "200",
             "--timeout",
             "20",
             "--retries",

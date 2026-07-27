@@ -377,6 +377,14 @@ def first_wash_start_after_reclaim(candles: list[base.Candle], reclaim_i: int, h
     return None
 
 
+def first_hold_reclaim_after_low(candles: list[base.Candle], blue_low_i: int, hold_line: Decimal) -> int | None:
+    """Return the first close back above hold after the down-kill low."""
+    for index in range(blue_low_i, len(candles)):
+        if candles[index].close >= hold_line:
+            return index
+    return None
+
+
 def post_departure_confirms_wash_peak(
     candles: list[base.Candle],
     departure_i: int,
@@ -683,18 +691,21 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                     continue
                 if not is_blue_breakout_end(candles, breakout_i, hold_line, args, blue_before_breakout):
                     continue
-                blue_region = candles[effective_blue_start_i : breakout_i + 1]
+                reclaim_i = first_hold_reclaim_after_low(candles, blue_low_i, hold_line)
+                if reclaim_i is None or reclaim_i >= n - 1:
+                    continue
+                if reclaim_i < effective_blue_start_i:
+                    continue
+                blue_region = candles[effective_blue_start_i : reclaim_i + 1]
                 if max_market_blue_bars is not None and len(blue_region) > max_market_blue_bars:
                     continue
                 blue_below_close_count = sum(1 for candle in blue_region if candle.close < hold_line)
                 max_blue_below_close_count = getattr(args, "max_blue_below_close_count", None)
                 if max_blue_below_close_count is not None and blue_below_close_count > max_blue_below_close_count:
                     continue
-                wash_start_i = first_wash_start_after_reclaim(candles, breakout_i, hold_line)
-                if wash_start_i is None or wash_start_i >= n - 1:
-                    continue
+                wash_start_i = reclaim_i
                 wash_start = candles[wash_start_i]
-                blue_average_volume = average_quote_volume(blue_before_breakout)
+                blue_average_volume = average_quote_volume(candles[effective_blue_start_i:reclaim_i])
                 breakout_volume_ratio = (
                     wash_start.quote_volume / blue_average_volume
                     if blue_average_volume > 0
@@ -727,7 +738,7 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                                 yellow_end=candles[yellow_end_i],
                                 blue_start=candles[effective_blue_start_i],
                                 blue_low=blue_low_candle,
-                                reclaim=candles[breakout_i],
+                                reclaim=candles[reclaim_i],
                                 wash_start=wash_start,
                                 wash_end=wash_end,
                                 hold_line=hold_line,

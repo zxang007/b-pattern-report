@@ -1,0 +1,65 @@
+name: Verified Pattern Examples
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "four_h_segment_arc_scan.py"
+      - "scan_four_h_segment_arc_market.py"
+      - "market_archive_pattern_scan.py"
+      - "screen_aria_4h_pattern.py"
+      - "verified_examples.csv"
+      - "verify_verified_examples.py"
+      - ".github/workflows/verified-pattern-examples.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Scan verified examples
+        run: |
+          mkdir -p regression
+          SYMBOLS="$(python3 -c 'import csv; print(",".join(row["symbol"] for row in csv.DictReader(open("verified_examples.csv", encoding="utf-8"))))')"
+          START_DATE="$(python3 -c 'import csv; print(min(row["scan_start_date"] for row in csv.DictReader(open("verified_examples.csv", encoding="utf-8"))))')"
+          END_DATE="$(python3 -c 'import csv; print(max(row["scan_end_date"] for row in csv.DictReader(open("verified_examples.csv", encoding="utf-8"))))')"
+          echo "verified_symbols=${SYMBOLS}"
+          echo "verified_window=${START_DATE}..${END_DATE}"
+          python scan_four_h_segment_arc_market.py \
+            --symbols "$SYMBOLS" \
+            --start-date "$START_DATE" \
+            --end-date "$END_DATE" \
+            --csv-file regression/verified_examples_scan.csv \
+            --archive-granularity auto \
+            --workers 6 \
+            --progress-every 1 \
+            --archive-sleep 0 \
+            --limit 200 \
+            --per-symbol-limit 20 \
+            --timeout 20 \
+            --retries 2 \
+            --failed-retry-passes 1 \
+            --insecure
+          python verify_verified_examples.py \
+            --examples verified_examples.csv \
+            --csv-file regression/verified_examples_scan.csv
+
+      - name: Upload regression CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-examples-scan
+          path: regression/verified_examples_scan.csv
+          if-no-files-found: ignore

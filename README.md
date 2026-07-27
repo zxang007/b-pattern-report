@@ -25,3 +25,14 @@ The symbols file is updated by a separate monthly workflow near Beijing month-en
 That workflow refuses to write or commit if the fetched list is empty or has fewer
 than 400 symbols, and it only commits real list changes with the fixed message
 `Update futures symbols`.
+
+## Regression guard
+
+`verified_examples.csv` lists the human-confirmed historical samples used to protect the
+scanner logic from losing known examples. These rows are validation samples only; the
+scanner must not special-case their symbols or timestamps.
+
+`Verified Pattern Examples` is a separate GitHub Actions workflow. It scans only the
+sample symbols over the sample date ranges, writes `regression/verified_examples_scan.csv`,
+and then runs `verify_verified_examples.py`. The verifier is offline and only checks the
+scan CSV, so it can also be run on any pre-generated CSV without fetching market data.

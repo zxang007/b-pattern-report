@@ -217,6 +217,29 @@ def remove_yellow_covering_wash(matches: list[SegmentArcMatch]) -> list[SegmentA
     return kept
 
 
+def remove_wash_covering_later_setup(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:
+    """Drop overlong washes that already contain a later higher-hold setup."""
+    dropped: set[int] = set()
+    indexed = list(enumerate(matches))
+    for prior_index, prior in indexed:
+        if prior_index in dropped:
+            continue
+        for later_index, later in indexed:
+            if prior_index == later_index:
+                continue
+            if later.yellow_start.open_time <= prior.yellow_start.open_time:
+                continue
+            yellow_starts_inside_prior_wash = (
+                prior.wash_start.open_time <= later.yellow_start.open_time <= prior.wash_end.open_time
+            )
+            later_setup_forms_inside_prior_wash = later.wash_start.open_time <= prior.wash_end.open_time
+            later_holds_higher = later.hold_line > prior.hold_line
+            if yellow_starts_inside_prior_wash and later_setup_forms_inside_prior_wash and later_holds_higher:
+                dropped.add(prior_index)
+                break
+    return [match for index, match in enumerate(matches) if index not in dropped]
+
+
 def selection_key(match: SegmentArcMatch) -> tuple[int, Decimal, Decimal, Decimal]:
     total_bars = (match.wash_end.open_time - match.yellow_start.open_time) // (4 * 60 * 60 * 1000) + 1
     hold_gap = pct(match.wash_min_close, match.hold_line)
@@ -703,13 +726,6 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
 
                 departures = departure_indexes(candles, wash_start_i, hold_line, max_market_wash_bars)
                 for departure_pos, departure_i in enumerate(departures):
-                    has_later_departure = departure_pos < len(departures) - 1
-                    if (
-                        has_later_departure
-                        and departure_i + 1 < len(candles)
-                        and candles[departure_i + 1].close <= candles[departure_i].close
-                    ):
-                        continue
                     wash = candles[wash_start_i:departure_i]
                     min_market_wash_bars = getattr(args, "min_market_wash_bars", None)
                     if min_market_wash_bars is not None and len(wash) < min_market_wash_bars:
@@ -749,12 +765,14 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
 
     matches = remove_yellow_covering_wash(matches)
     matches = remove_preempted_broad_matches(matches)
+    matches = remove_wash_covering_later_setup(matches)
     matches = resolve_blue_inside_wash_conflicts(matches)
     matches = remove_dominated_substructures(matches)
     matches = keep_rally_candidates(matches)
     matches = keep_tightest_hold_for_wash(matches)
     matches = keep_first_wash_for_blue(matches)
     matches = remove_yellow_covering_wash(matches)
+    matches = remove_wash_covering_later_setup(matches)
     matches = remove_nested_substructures(matches)
     matches = resolve_blue_inside_wash_conflicts(matches)
     matches = remove_dominated_substructures(matches)

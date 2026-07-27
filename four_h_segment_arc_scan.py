@@ -309,9 +309,15 @@ def is_blue_breakout_end(
     if index <= 0:
         return False
     candle = candles[index]
-    if candle.close < hold_line:
+    prev_close = candles[index - 1].close
+    if candle.close >= hold_line:
+        return candle.close > prev_close
+
+    next_i = index + 1
+    if next_i >= len(candles):
         return False
-    return True
+    next_candle = candles[next_i]
+    return next_candle.close >= hold_line and next_candle.close > candle.close
 
 
 def is_coherent_yellow_rally(segment: list[base.Candle]) -> bool:
@@ -360,12 +366,15 @@ def has_failed_reclaim_before(
 
 
 def first_wash_start_after_reclaim(candles: list[base.Candle], reclaim_i: int, hold_line: Decimal) -> int | None:
-    """The reclaim candle is part of wash once it closes back above the rally hold line."""
+    """Return the first candle that closes back above the rally hold line."""
     if reclaim_i >= len(candles):
         return None
-    if candles[reclaim_i].close < hold_line:
-        return None
-    return reclaim_i
+    if candles[reclaim_i].close >= hold_line:
+        return reclaim_i
+    wash_start_i = reclaim_i + 1
+    if wash_start_i < len(candles) and candles[wash_start_i].close >= hold_line:
+        return wash_start_i
+    return None
 
 
 def post_departure_confirms_wash_peak(
@@ -435,26 +444,13 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
     low_close_i = min(range(local_start_i, yellow_end_i), key=lambda i: candles[i].close)
     base_start_i = min(low_close_i + 1, yellow_end_i)
     if base_start_i < yellow_end_i:
-        base_close = candles[base_start_i].close
-        dipped_after_base = False
-        final_lift_i: int | None = None
-        for index in range(base_start_i + 1, yellow_end_i):
+        suffix_low_close = candles[yellow_end_i - 1].close
+        for index in range(yellow_end_i - 2, base_start_i - 1, -1):
             candle = candles[index]
-            if candle.close < base_close:
-                dipped_after_base = True
-                continue
-            if not dipped_after_base:
-                continue
-            prefix = candles[base_start_i:index]
-            prefix_high = max(item.high for item in prefix)
-            if (
-                candle.close > prefix_high
-                and candle.close > candle.open
-                and candle.quote_volume >= median_quote_volume(prefix)
-            ):
-                final_lift_i = index
-        if final_lift_i is not None:
-            return final_lift_i
+            if candle.close <= suffix_low_close and is_coherent_yellow_rally(candles[index : yellow_end_i + 1]):
+                return index
+            if candle.close < suffix_low_close:
+                suffix_low_close = candle.close
     return base_start_i
 
 
@@ -495,9 +491,9 @@ def keep_rally_candidates(matches: list[SegmentArcMatch]) -> list[SegmentArcMatc
 
     kept: list[SegmentArcMatch] = []
     for by_start in grouped.values():
-        _, representative = max(
-            by_start.values(),
-            key=lambda item: (item[0], -item[1].yellow_start.open_time),
+        representative = min(
+            (item[1] for item in by_start.values()),
+            key=structure_rank_key,
         )
         kept.append(representative)
     return kept
@@ -705,17 +701,16 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                 max_blue_below_close_count = getattr(args, "max_blue_below_close_count", None)
                 if max_blue_below_close_count is not None and blue_below_close_count > max_blue_below_close_count:
                     continue
-                blue_average_volume = average_quote_volume(blue_before_breakout)
-                breakout_volume_ratio = (
-                    candles[breakout_i].quote_volume / blue_average_volume
-                    if blue_average_volume > 0
-                    else Decimal("0")
-                )
-
                 wash_start_i = first_wash_start_after_reclaim(candles, breakout_i, hold_line)
                 if wash_start_i is None or wash_start_i >= n - 1:
                     continue
                 wash_start = candles[wash_start_i]
+                blue_average_volume = average_quote_volume(blue_before_breakout)
+                breakout_volume_ratio = (
+                    wash_start.quote_volume / blue_average_volume
+                    if blue_average_volume > 0
+                    else Decimal("0")
+                )
 
                 departures = departure_indexes(candles, wash_start_i, hold_line, max_market_wash_bars)
                 for departure_pos, departure_i in enumerate(departures):

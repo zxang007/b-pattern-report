@@ -179,6 +179,24 @@ def remove_nested_substructures(matches: list[SegmentArcMatch]) -> list[SegmentA
     return kept
 
 
+def remove_blue_inside_prior_wash(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:
+    """Drop candidates whose down-kill starts inside an earlier candidate's wash."""
+    kept: list[SegmentArcMatch] = []
+    for match in matches:
+        nested_in_prior_wash = False
+        for prior in matches:
+            if prior is match:
+                continue
+            if prior.yellow_start.open_time >= match.yellow_start.open_time:
+                continue
+            if prior.wash_start.open_time <= match.blue_start.open_time <= prior.wash_end.open_time:
+                nested_in_prior_wash = True
+                break
+        if not nested_in_prior_wash:
+            kept.append(match)
+    return kept
+
+
 def selection_key(match: SegmentArcMatch) -> tuple[int, Decimal, Decimal, Decimal]:
     total_bars = (match.wash_end.open_time - match.yellow_start.open_time) // (4 * 60 * 60 * 1000) + 1
     hold_gap = pct(match.wash_min_close, match.hold_line)
@@ -709,10 +727,14 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                         )
                         break
 
+    matches = remove_preempted_broad_matches(matches)
+    matches = remove_blue_inside_prior_wash(matches)
+    matches = remove_dominated_substructures(matches)
     matches = keep_rally_candidates(matches)
     matches = keep_tightest_hold_for_wash(matches)
     matches = keep_first_wash_for_blue(matches)
-    matches = remove_preempted_broad_matches(matches)
+    matches = remove_nested_substructures(matches)
+    matches = remove_blue_inside_prior_wash(matches)
     matches = remove_dominated_substructures(matches)
     sort_mode = getattr(args, "sort", "time")
     if sort_mode == "score":

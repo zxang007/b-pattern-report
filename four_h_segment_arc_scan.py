@@ -163,7 +163,7 @@ def score_match(
 
 
 def remove_nested_substructures(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:
-    """Drop small setups carved out of the blue/wash area of a larger setup."""
+    """Drop weaker setups carved out of the blue/wash area of a larger setup."""
     kept: list[SegmentArcMatch] = []
     for match in sorted(matches, key=lambda item: (item.yellow_start.open_time, item.wash_end.open_time)):
         nested = False
@@ -171,7 +171,7 @@ def remove_nested_substructures(matches: list[SegmentArcMatch]) -> list[SegmentA
             inside_parent_setup = (
                 parent.yellow_peak.open_time < match.yellow_start.open_time <= parent.wash_end.open_time
             )
-            if inside_parent_setup:
+            if inside_parent_setup and parent.hold_line >= match.hold_line:
                 nested = True
                 break
         if not nested:
@@ -378,16 +378,7 @@ def post_departure_confirms_wash_peak(
     if departure_i >= len(candles):
         return False
     departure_close = candles[departure_i].close
-    extension = departure_close - wash_peak
-    if extension <= 0:
-        return False
-    follow_through_close = departure_close + extension / Decimal("2")
-    for candle in candles[departure_i + 1 :]:
-        if candle.close < wash_peak:
-            return False
-        if candle.close >= follow_through_close:
-            return True
-    return True
+    return departure_close > wash_peak
 
 
 def same_bj_month(left_open_time: int, right_open_time: int) -> bool:
@@ -447,7 +438,6 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
     if base_start_i < yellow_end_i:
         base_close = candles[base_start_i].close
         dipped_after_base = False
-        final_lift_i: int | None = None
         for index in range(base_start_i + 1, yellow_end_i):
             candle = candles[index]
             if candle.close < base_close:
@@ -456,15 +446,23 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
             if not dipped_after_base:
                 continue
             prefix = candles[base_start_i:index]
-            prefix_high = max(item.high for item in prefix)
+            prefix_high = max(item.close for item in prefix)
             if (
                 candle.close > prefix_high
                 and candle.close > candle.open
                 and candle.quote_volume >= median_quote_volume(prefix)
             ):
-                final_lift_i = index
-        if final_lift_i is not None:
-            return final_lift_i
+                return index
+        for index in range(base_start_i + 1, yellow_end_i):
+            candle = candles[index]
+            prefix = candles[base_start_i:index]
+            prefix_high = max(item.close for item in prefix)
+            if (
+                candle.close > prefix_high
+                and candle.close > candle.open
+                and candle.quote_volume >= median_quote_volume(prefix)
+            ):
+                return index
     return base_start_i
 
 

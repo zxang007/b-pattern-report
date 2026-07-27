@@ -311,6 +311,8 @@ def is_blue_breakout_end(
     candle = candles[index]
     if candle.close < hold_line:
         return False
+    if candle.close <= candles[index - 1].close:
+        return False
     return True
 
 
@@ -437,7 +439,6 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
     if base_start_i < yellow_end_i:
         base_close = candles[base_start_i].close
         dipped_after_base = False
-        final_lift_i: int | None = None
         for index in range(base_start_i + 1, yellow_end_i):
             candle = candles[index]
             if candle.close < base_close:
@@ -446,15 +447,23 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
             if not dipped_after_base:
                 continue
             prefix = candles[base_start_i:index]
-            prefix_high = max(item.high for item in prefix)
+            prefix_high = max(item.close for item in prefix)
             if (
                 candle.close > prefix_high
                 and candle.close > candle.open
                 and candle.quote_volume >= median_quote_volume(prefix)
             ):
-                final_lift_i = index
-        if final_lift_i is not None:
-            return final_lift_i
+                return index
+        for index in range(base_start_i + 1, yellow_end_i):
+            candle = candles[index]
+            prefix = candles[base_start_i:index]
+            prefix_high = max(item.close for item in prefix)
+            if (
+                candle.close > prefix_high
+                and candle.close > candle.open
+                and candle.quote_volume >= median_quote_volume(prefix)
+            ):
+                return index
     return base_start_i
 
 

@@ -327,6 +327,8 @@ def is_coherent_yellow_rally(segment: list[base.Candle]) -> bool:
     end_close = segment[-1].close
     if end_close <= start_close:
         return False
+    if end_close < max(candle.close for candle in segment):
+        return False
     midway_close = start_close + (end_close - start_close) / Decimal("2")
     has_lifted = False
     for candle in segment[1:]:
@@ -441,15 +443,12 @@ def normalized_blue_start_i(
 def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_end_i: int) -> int:
     if yellow_end_i <= start_i:
         return start_i
-    hold_line = candles[yellow_end_i].close
-    local_start_i = start_i
-    for index in range(yellow_end_i - 1, start_i - 1, -1):
-        if candles[index].close > hold_line:
-            local_start_i = index + 1
-            break
-    if local_start_i >= yellow_end_i:
-        local_start_i = start_i
-    return local_start_i
+    candidate_indexes = range(start_i, yellow_end_i)
+    lowest_close = min(candles[index].close for index in candidate_indexes)
+    for index in candidate_indexes:
+        if candles[index].close == lowest_close:
+            return index
+    return start_i
 
 
 def structure_rank_key(match: SegmentArcMatch) -> tuple[Decimal, Decimal, int, Decimal, Decimal, Decimal, Decimal]:

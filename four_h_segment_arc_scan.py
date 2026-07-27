@@ -201,6 +201,22 @@ def resolve_blue_inside_wash_conflicts(matches: list[SegmentArcMatch]) -> list[S
     return [match for index, match in enumerate(matches) if index not in dropped]
 
 
+def remove_yellow_covering_wash(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:
+    """Drop candidates whose rally area already contains another candidate's wash area."""
+    kept: list[SegmentArcMatch] = []
+    for match in matches:
+        covers_wash = False
+        for other in matches:
+            if other is match:
+                continue
+            if match.yellow_start.open_time <= other.wash_start.open_time <= match.yellow_end.open_time:
+                covers_wash = True
+                break
+        if not covers_wash:
+            kept.append(match)
+    return kept
+
+
 def selection_key(match: SegmentArcMatch) -> tuple[int, Decimal, Decimal, Decimal]:
     total_bars = (match.wash_end.open_time - match.yellow_start.open_time) // (4 * 60 * 60 * 1000) + 1
     hold_gap = pct(match.wash_min_close, match.hold_line)
@@ -731,12 +747,14 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                         )
                         break
 
+    matches = remove_yellow_covering_wash(matches)
     matches = remove_preempted_broad_matches(matches)
     matches = resolve_blue_inside_wash_conflicts(matches)
     matches = remove_dominated_substructures(matches)
     matches = keep_rally_candidates(matches)
     matches = keep_tightest_hold_for_wash(matches)
     matches = keep_first_wash_for_blue(matches)
+    matches = remove_yellow_covering_wash(matches)
     matches = remove_nested_substructures(matches)
     matches = resolve_blue_inside_wash_conflicts(matches)
     matches = remove_dominated_substructures(matches)

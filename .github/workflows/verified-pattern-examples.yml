@@ -11,6 +11,7 @@ on:
       - "market_archive_pattern_scan.py"
       - "screen_aria_4h_pattern.py"
       - "verified_examples.csv"
+      - "run_verified_example_scans.py"
       - "verify_verified_examples.py"
       - ".github/workflows/verified-pattern-examples.yml"
 
@@ -32,26 +33,10 @@ jobs:
       - name: Scan verified examples
         run: |
           mkdir -p regression
-          SYMBOLS="$(python3 -c 'import csv; print(",".join(row["symbol"] for row in csv.DictReader(open("verified_examples.csv", encoding="utf-8"))))')"
-          START_DATE="$(python3 -c 'import csv; print(min(row["scan_start_date"] for row in csv.DictReader(open("verified_examples.csv", encoding="utf-8"))))')"
-          END_DATE="$(python3 -c 'import csv; print(max(row["scan_end_date"] for row in csv.DictReader(open("verified_examples.csv", encoding="utf-8"))))')"
-          echo "verified_symbols=${SYMBOLS}"
-          echo "verified_window=${START_DATE}..${END_DATE}"
-          python scan_four_h_segment_arc_market.py \
-            --symbols "$SYMBOLS" \
-            --start-date "$START_DATE" \
-            --end-date "$END_DATE" \
-            --csv-file regression/verified_examples_scan.csv \
-            --archive-granularity auto \
-            --workers 6 \
-            --progress-every 1 \
-            --archive-sleep 0 \
-            --limit 200 \
-            --per-symbol-limit 20 \
-            --timeout 20 \
-            --retries 2 \
-            --failed-retry-passes 1 \
-            --insecure
+          python run_verified_example_scans.py \
+            --examples verified_examples.csv \
+            --out regression/verified_examples_scan.csv \
+            --work-dir regression/by_example
           python verify_verified_examples.py \
             --examples verified_examples.csv \
             --csv-file regression/verified_examples_scan.csv
@@ -61,5 +46,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: verified-examples-scan
-          path: regression/verified_examples_scan.csv
+          path: regression
           if-no-files-found: ignore

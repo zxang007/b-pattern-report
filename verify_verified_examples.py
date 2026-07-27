@@ -22,9 +22,13 @@ TIME_FIELDS = (
 @dataclass(frozen=True)
 class Example:
     symbol: str
+    expected_yellow_start: dt.datetime
+    expected_yellow_end: dt.datetime
+    expected_blue_start: dt.datetime
+    expected_blue_end: dt.datetime
     expected_wash_start: dt.datetime
     expected_wash_end: dt.datetime
-    window: dt.timedelta
+    max_segment_gap: dt.timedelta
     notes: str
 
 
@@ -49,13 +53,17 @@ def load_examples(path: Path) -> list[Example]:
         rows = list(csv.DictReader(handle))
     examples: list[Example] = []
     for row in rows:
-        window_days = float(row.get("window_days") or "3")
+        max_gap_hours = float(row.get("max_segment_gap_hours") or "24")
         examples.append(
             Example(
                 symbol=row["symbol"].strip().upper(),
+                expected_yellow_start=parse_bj(row["expected_yellow_start_bj"]),
+                expected_yellow_end=parse_bj(row["expected_yellow_end_bj"]),
+                expected_blue_start=parse_bj(row["expected_blue_start_bj"]),
+                expected_blue_end=parse_bj(row["expected_blue_end_bj"]),
                 expected_wash_start=parse_bj(row["expected_wash_start_bj"]),
                 expected_wash_end=parse_bj(row["expected_wash_end_bj"]),
-                window=dt.timedelta(days=window_days),
+                max_segment_gap=dt.timedelta(hours=max_gap_hours),
                 notes=row.get("notes", ""),
             )
         )
@@ -77,16 +85,35 @@ def row_time(row: dict[str, str], field: str) -> dt.datetime | None:
         return None
 
 
-def row_overlaps_example(row: dict[str, str], example: Example) -> bool:
+def boundary_gap(
+    actual_start: dt.datetime,
+    actual_end: dt.datetime,
+    expected_start: dt.datetime,
+    expected_end: dt.datetime,
+) -> dt.timedelta:
+    return max(abs(actual_start - expected_start), abs(actual_end - expected_end))
+
+
+def row_segment_gaps(row: dict[str, str], example: Example) -> dict[str, dt.timedelta] | None:
     if row.get("symbol", "").strip().upper() != example.symbol:
-        return False
+        return None
+    yellow_start = row_time(row, "yellow_start_bj")
+    yellow_end = row_time(row, "yellow_end_bj")
+    blue_start = row_time(row, "blue_start_bj")
+    blue_end = row_time(row, "reclaim_bj")
     wash_start = row_time(row, "wash_start_bj")
     wash_end = row_time(row, "wash_end_bj")
-    if wash_start is None or wash_end is None:
-        return False
-    start_floor = example.expected_wash_start - example.window
-    end_ceiling = example.expected_wash_end + example.window
-    return wash_start <= end_ceiling and wash_end >= start_floor
+    if None in (yellow_start, yellow_end, blue_start, blue_end, wash_start, wash_end):
+        return None
+    return {
+        "yellow": boundary_gap(yellow_start, yellow_end, example.expected_yellow_start, example.expected_yellow_end),
+        "blue": boundary_gap(blue_start, blue_end, example.expected_blue_start, example.expected_blue_end),
+        "wash": boundary_gap(wash_start, wash_end, example.expected_wash_start, example.expected_wash_end),
+    }
+
+
+def gap_hours(value: dt.timedelta) -> float:
+    return value.total_seconds() / 3600
 
 
 def compact_row(row: dict[str, str]) -> str:
@@ -101,10 +128,36 @@ def main() -> int:
 
     failures: list[Example] = []
     for example in examples:
-        candidates = [row for row in rows if row_overlaps_example(row, example)]
-        if candidates:
-            print(f"verified {example.symbol}: {compact_row(candidates[0])}", flush=True)
+        scored: list[tuple[dt.timedelta, dt.timedelta, dict[str, str], dict[str, dt.timedelta]]] = []
+        for row in rows:
+            gaps = row_segment_gaps(row, example)
+            if gaps is None:
+                continue
+            max_gap = max(gaps.values())
+            total_gap = sum(gaps.values(), dt.timedelta(0))
+            scored.append((max_gap, total_gap, row, gaps))
+        scored.sort(key=lambda item: (item[0], item[1]))
+        if scored and scored[0][0] <= example.max_segment_gap:
+            _, _, row, gaps = scored[0]
+            print(
+                f"verified {example.symbol}: "
+                f"yellow_gap={gap_hours(gaps['yellow']):.1f}h "
+                f"blue_gap={gap_hours(gaps['blue']):.1f}h "
+                f"wash_gap={gap_hours(gaps['wash']):.1f}h "
+                f"{compact_row(row)}",
+                flush=True,
+            )
             continue
+        if scored:
+            max_gap, _, row, gaps = scored[0]
+            print(
+                f"nearest {example.symbol}: max_gap={gap_hours(max_gap):.1f}h "
+                f"yellow_gap={gap_hours(gaps['yellow']):.1f}h "
+                f"blue_gap={gap_hours(gaps['blue']):.1f}h "
+                f"wash_gap={gap_hours(gaps['wash']):.1f}h "
+                f"{compact_row(row)}",
+                flush=True,
+            )
         failures.append(example)
 
     if failures:
@@ -113,7 +166,7 @@ def main() -> int:
             print(
                 f"- {example.symbol} expected wash around "
                 f"{example.expected_wash_start:%Y-%m-%d %H:%M} -> {example.expected_wash_end:%Y-%m-%d %H:%M} "
-                f"window=+/-{example.window.days}d {example.notes}",
+                f"max_segment_gap={gap_hours(example.max_segment_gap):.1f}h {example.notes}",
                 flush=True,
             )
         return 1

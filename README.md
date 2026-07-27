@@ -32,7 +32,10 @@ than 400 symbols, and it only commits real list changes with the fixed message
 scanner logic from losing known examples. These rows are validation samples only; the
 scanner must not special-case their symbols or timestamps.
 
-`Verified Pattern Examples` is a separate GitHub Actions workflow. It scans only the
-sample symbols over the sample date ranges, writes `regression/verified_examples_scan.csv`,
-and then runs `verify_verified_examples.py`. The verifier is offline and only checks the
-scan CSV, so it can also be run on any pre-generated CSV without fetching market data.
+`Verified Pattern Examples` is a separate GitHub Actions workflow. It re-runs the generic
+market scanner once per sample row over that sample's own date range, merges the generated
+CSV files into `regression/verified_examples_scan.csv`, and then runs
+`verify_verified_examples.py`. The verifier compares the generated yellow, blue, and white
+segment boundaries with the human-confirmed backtest targets. The scanner itself never
+imports `verified_examples.csv`; those timestamps are an answer key for regression testing,
+not a matching shortcut.

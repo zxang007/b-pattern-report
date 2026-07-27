@@ -193,6 +193,9 @@ def resolve_blue_inside_wash_conflicts(matches: list[SegmentArcMatch]) -> list[S
                 continue
             if not (prior.wash_start.open_time <= later.blue_start.open_time <= prior.wash_end.open_time):
                 continue
+            if later.hold_line > prior.hold_line:
+                dropped.add(prior_index)
+                continue
             if structure_rank_key(later) < structure_rank_key(prior):
                 dropped.add(prior_index)
                 continue
@@ -232,9 +235,9 @@ def remove_wash_covering_later_setup(matches: list[SegmentArcMatch]) -> list[Seg
             yellow_starts_inside_prior_wash = (
                 prior.wash_start.open_time <= later.yellow_start.open_time <= prior.wash_end.open_time
             )
-            later_setup_forms_inside_prior_wash = later.wash_start.open_time <= prior.wash_end.open_time
+            later_recovery_forms_inside_prior_wash = later.reclaim.open_time <= prior.wash_end.open_time
             later_holds_higher = later.hold_line > prior.hold_line
-            if yellow_starts_inside_prior_wash and later_setup_forms_inside_prior_wash and later_holds_higher:
+            if yellow_starts_inside_prior_wash and later_recovery_forms_inside_prior_wash and later_holds_higher:
                 dropped.add(prior_index)
                 break
     return [match for index, match in enumerate(matches) if index not in dropped]
@@ -306,9 +309,6 @@ def is_blue_breakout_end(
     if index <= 0:
         return False
     candle = candles[index]
-    prev_close = candles[index - 1].close
-    if candle.close <= prev_close:
-        return False
     if candle.close < hold_line:
         return False
     return True
@@ -447,6 +447,7 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
     if base_start_i < yellow_end_i:
         base_close = candles[base_start_i].close
         dipped_after_base = False
+        final_lift_i: int | None = None
         for index in range(base_start_i + 1, yellow_end_i):
             candle = candles[index]
             if candle.close < base_close:
@@ -461,7 +462,9 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
                 and candle.close > candle.open
                 and candle.quote_volume >= median_quote_volume(prefix)
             ):
-                return index
+                final_lift_i = index
+        if final_lift_i is not None:
+            return final_lift_i
     return base_start_i
 
 

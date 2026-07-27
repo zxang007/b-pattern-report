@@ -449,8 +449,7 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
             break
     if local_start_i >= yellow_end_i:
         local_start_i = start_i
-    low_close_i = min(range(local_start_i, yellow_end_i), key=lambda i: candles[i].close)
-    return min(low_close_i + 1, yellow_end_i)
+    return local_start_i
 
 
 def structure_rank_key(match: SegmentArcMatch) -> tuple[Decimal, Decimal, int, Decimal, Decimal, Decimal, Decimal]:
@@ -470,10 +469,7 @@ def structure_rank_key(match: SegmentArcMatch) -> tuple[Decimal, Decimal, int, D
 
 
 def keep_rally_candidates(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:
-    grouped: dict[
-        tuple[int, int, int, int, Decimal],
-        dict[int, tuple[int, SegmentArcMatch]],
-    ] = {}
+    best_by_structure: dict[tuple[int, int, int, int, int, Decimal], SegmentArcMatch] = {}
     for match in matches:
         key = (
             match.yellow_peak.open_time,
@@ -483,19 +479,15 @@ def keep_rally_candidates(matches: list[SegmentArcMatch]) -> list[SegmentArcMatc
             match.wash_end.open_time,
             match.hold_line,
         )
-        by_start = grouped.setdefault(key, {})
-        start_key = match.yellow_start.open_time
-        count, representative = by_start.get(start_key, (0, match))
-        by_start[start_key] = (count + 1, representative)
-
-    kept: list[SegmentArcMatch] = []
-    for by_start in grouped.values():
-        representative = min(
-            (item[1] for item in by_start.values()),
-            key=structure_rank_key,
-        )
-        kept.append(representative)
-    return kept
+        current = best_by_structure.get(key)
+        if current is None:
+            best_by_structure[key] = match
+            continue
+        current_key = (current.yellow_start.open_time, structure_rank_key(current))
+        match_key = (match.yellow_start.open_time, structure_rank_key(match))
+        if match_key < current_key:
+            best_by_structure[key] = match
+    return list(best_by_structure.values())
 
 
 def keep_tightest_hold_for_wash(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:

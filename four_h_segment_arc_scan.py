@@ -179,22 +179,26 @@ def remove_nested_substructures(matches: list[SegmentArcMatch]) -> list[SegmentA
     return kept
 
 
-def remove_blue_inside_prior_wash(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:
-    """Drop candidates whose down-kill starts inside an earlier candidate's wash."""
-    kept: list[SegmentArcMatch] = []
-    for match in matches:
-        nested_in_prior_wash = False
-        for prior in matches:
-            if prior is match:
+def resolve_blue_inside_wash_conflicts(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:
+    """Resolve overlapping setups when one down-kill starts inside another setup's wash."""
+    dropped: set[int] = set()
+    indexed = list(enumerate(matches))
+    for later_index, later in indexed:
+        if later_index in dropped:
+            continue
+        for prior_index, prior in indexed:
+            if prior_index == later_index or prior_index in dropped:
                 continue
-            if prior.yellow_start.open_time >= match.yellow_start.open_time:
+            if prior.yellow_start.open_time >= later.yellow_start.open_time:
                 continue
-            if prior.wash_start.open_time <= match.blue_start.open_time <= prior.wash_end.open_time:
-                nested_in_prior_wash = True
-                break
-        if not nested_in_prior_wash:
-            kept.append(match)
-    return kept
+            if not (prior.wash_start.open_time <= later.blue_start.open_time <= prior.wash_end.open_time):
+                continue
+            if structure_rank_key(later) < structure_rank_key(prior):
+                dropped.add(prior_index)
+                continue
+            dropped.add(later_index)
+            break
+    return [match for index, match in enumerate(matches) if index not in dropped]
 
 
 def selection_key(match: SegmentArcMatch) -> tuple[int, Decimal, Decimal, Decimal]:
@@ -728,13 +732,13 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                         break
 
     matches = remove_preempted_broad_matches(matches)
-    matches = remove_blue_inside_prior_wash(matches)
+    matches = resolve_blue_inside_wash_conflicts(matches)
     matches = remove_dominated_substructures(matches)
     matches = keep_rally_candidates(matches)
     matches = keep_tightest_hold_for_wash(matches)
     matches = keep_first_wash_for_blue(matches)
     matches = remove_nested_substructures(matches)
-    matches = remove_blue_inside_prior_wash(matches)
+    matches = resolve_blue_inside_wash_conflicts(matches)
     matches = remove_dominated_substructures(matches)
     sort_mode = getattr(args, "sort", "time")
     if sort_mode == "score":

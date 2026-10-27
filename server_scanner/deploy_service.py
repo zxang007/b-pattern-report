@@ -27,6 +27,7 @@ SERVICE_FILES = (
     "market-pattern-front.service",
     "platform_door_15m.py", "prepare_15m_market.py", "plot_platform_15m.py", "run_platform_market.py",
     "regression_platform_15m.py", "platform_pipeline.py", "market-pattern-confirmation.service",
+    "joint_report_view.py",
 )
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "qqbot"]
 

@@ -23,6 +23,7 @@ from screen_aria_4h_pattern import Candle
 from platform_door_15m import PlatformSearch
 from plot_platform_15m import bj, render
 from prepare_15m_market import stamp, INTERVAL
+from joint_report_view import regroup_report
 
 
 RULES = [
@@ -234,6 +235,7 @@ def main():
     rules_html = '<ol>' + ''.join('<li>' + html.escape(rule) + '</li>' for rule in RULES) + '</ol>'
     body = f'<h1>4小时＋15分钟联合筛选</h1><p>本轮覆盖 {summary["total_symbols"]} 个币安 USDT 永续交易对，4小时候选 {manifest["candidate_symbols"]} 个币；两级同时命中 <strong>{summary["matched_symbols"]}</strong> 个币、{len(cards)} 组4小时结构，完整保留 {len(rows)} 条15分钟组合。</p><p>窗口：{summary["start_bj"]} 至 {summary["end_bj_exclusive"]}（不含截止时刻后的K线）。按最近可见确认时间由新到旧排列；同一4小时结构的多次15分钟回踩聚合展示。</p><p><a href="matches.csv">完整命中CSV</a> · <a href="events.json">规则、来源与五例回归证据</a> · <a href="/runs/{source.name}/index.html">全部4小时候选</a></p><details><summary>本轮统一规则</summary>{rules_html}</details><details><summary>五例自动复测：5/5通过；旧错例4/4排除</summary><table>{regression_table}</table></details><table><tr><th>币名（点按复制USDT）</th><th>最近可见确认</th><th>末次主要回踩</th><th>保留组合</th><th>图形</th></tr>{listing}</table>'
     scanner.atomic_text(run / 'index.html', page('全市场联合筛选', body))
+    summary.update(regroup_report(run))
     if failures:
         summary.update(status='partial', elapsed_seconds=round(time.monotonic() - started, 2))
         scanner.atomic_json(run / 'summary.json', summary)

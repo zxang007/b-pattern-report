@@ -14,6 +14,7 @@ from cryptography.exceptions import InvalidTag
 
 import scanner_service as scanner
 import report_server
+from joint_report_view import signal_groups
 import four_h_segment_arc_scan as segment
 import scan_four_h_segment_arc_market as market
 from screen_aria_4h_pattern import Candle
@@ -166,6 +167,22 @@ class ScannerTests(unittest.TestCase):
         scanner.atomic_json(fresh_joint / 'summary.json', {'status': 'complete', 'stage': '4h_and_15m',
             'validation_ok': True, 'end_bj_exclusive': '2026-10-27T20:00:00+08:00'})
         self.assertEqual(report_server.latest_report(root), fresh_joint)
+
+    def test_same_signal_collects_all_four_h_evidence_once(self):
+        common = {'symbol': 'AAAUSDT', 'launch_bj': '2026-10-27 14:45',
+            'confirmed_bj': '2026-10-27 16:00', 'latest_retest_bj': '2026-10-27 15:30'}
+        rows = [{**common, 'group_id': str(i) * 24, 'variants': i} for i in range(1, 5)]
+        grouped = signal_groups(rows)
+        self.assertEqual(len(grouped), 1)
+        self.assertEqual({r['group_id'] for r in grouped[0]['sources']}, {r['group_id'] for r in rows})
+        self.assertEqual(len(signal_groups(rows + [rows[0]])[0]['sources']), 4)
+
+    def test_different_launches_or_symbols_are_not_merged(self):
+        common = {'symbol': 'AAAUSDT', 'launch_bj': '2026-10-27 14:45', 'confirmed_bj': '2026-10-27 16:00',
+            'latest_retest_bj': '2026-10-27 15:30', 'group_id': '1' * 24, 'variants': 2}
+        rows = [common, {**common, 'launch_bj': '2026-10-27 13:45', 'group_id': '2' * 24},
+            {**common, 'symbol': 'BBBUSDT', 'group_id': '3' * 24}]
+        self.assertEqual(len(signal_groups(rows)), 3)
 
     def test_report_encryption_rejects_wrong_key_and_tampering(self):
         key = bytes(range(32))

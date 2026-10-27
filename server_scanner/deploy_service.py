@@ -18,12 +18,15 @@ CORE_FILES = (
     "draw_four_h_segment_arc_matches_svg.py", "draw_market_current_logic_from_csv.py",
     "verified_examples.csv",
     "new_examples.csv",
+    "fifteen_m_examples.csv", "pending_15m_examples.csv", "rejected_15m_examples.csv", "additional_15m_nodes.csv",
 )
 SERVICE_FILES = (
     "scanner_service.py", "report_server.py", "report_front.py", "report_crypto.js", "report_zoom.js", "test_report_zoom.js", "setup_report_key.py", "renew_report_certificate.py", "test_scanner_service.py", "regression_reclaims.py", "config.json", "README.md",
     "market-pattern-scanner.service", "market-pattern-scanner.timer", "market-pattern-viewer.service",
     "market-pattern-http.service", "market-report-certificate.service", "market-report-certificate.timer",
     "market-pattern-front.service",
+    "platform_door_15m.py", "prepare_15m_market.py", "plot_platform_15m.py", "run_platform_market.py",
+    "regression_platform_15m.py", "platform_pipeline.py", "market-pattern-confirmation.service",
 )
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "qqbot"]
 
@@ -84,7 +87,7 @@ if state in ('active','activating','reloading'):
 config=root/'config.json'
 if not config.exists():
     shutil.copyfile(release/'config.json',config);config.chmod(0o600)
-for name in ['market-pattern-scanner.service','market-pattern-scanner.timer','market-pattern-viewer.service','market-pattern-http.service','market-report-certificate.service','market-report-certificate.timer','market-pattern-front.service']:
+for name in ['market-pattern-scanner.service','market-pattern-scanner.timer','market-pattern-viewer.service','market-pattern-http.service','market-report-certificate.service','market-report-certificate.timer','market-pattern-front.service','market-pattern-confirmation.service']:
     subprocess.run(['sudo','-n','install','-m','644',str(release/name),'/etc/systemd/system/'+name],check=True)
 subprocess.run(['sudo','-n','systemd-analyze','verify','/etc/systemd/system/market-pattern-scanner.service','/etc/systemd/system/market-pattern-scanner.timer','/etc/systemd/system/market-pattern-viewer.service'],check=True)
 current=root/'current'

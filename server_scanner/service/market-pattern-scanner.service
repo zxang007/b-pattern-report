@@ -2,6 +2,7 @@
 Description=Independent four-hour market pattern scanner
 Wants=network-online.target
 After=network-online.target
+OnSuccess=market-pattern-confirmation.service
 StartLimitIntervalSec=0
 
 [Service]

@@ -2,6 +2,16 @@
 
 本服务只做行情扫描、缓存和画图，与同机 QQ 机器人无关，不发送消息。GitHub 原有自动任务继续保留。
 
+## 四小时与十五分钟联合筛选
+
+四小时扫描成功后，通过 `OnSuccess` 触发 `market-pattern-confirmation.service`。后者补齐独立的 `state/fifteen_m.sqlite3`，运行平台、放量启动和多次回踩识别，只有两层都满足才进入联合结果。没有固定形态根数、三节点上限或15分钟90万门槛。首页保留上一轮已验证联合结果，直到下一轮联合结果完整生成。
+
+通用算法在 `platform_door_15m.py`，生产识别器不读取人工节点文件。`regression_platform_15m.py` 从完整行情自动搜索五例，核对用户节点及四组旧错例；同时用当前四小时代码重算样本，验证两个周期的真实关联。运行前必须有匹配该识别器 SHA-256 的 `state/platform-validated-engine.json`，五例复测图保存在 `state/platform-regression-charts/`。
+
+同一十五分钟证据若关联多个四小时候选，CSV 共用一条记录，`associated_group_ids` 保留全部关联；对应四小时明细仍完整保留。CSV逐行写出，查看器先流式压缩再加密，避免大结果在内存中展开多个副本。报告记录全部主要回踩及影线/收盘低点，同时标出形成后是否曾跌破平台，不按后来的涨幅筛选。
+
+用户另行授权的本次完成通知使用独立临时任务，正式定时服务不包含QQ发送脚本或收件人信息。
+
 ## 工作位置
 
 - 服务目录：`/home/ubuntu/market-pattern-scanner/`

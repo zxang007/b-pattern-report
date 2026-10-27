@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import base64
 import gzip
+import io
+import shutil
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import html
 import json
@@ -87,19 +89,28 @@ report.addEventListener('click',async event=>{const clickedImage=event.target.cl
 </script></html>'''
 
 
-def encrypted_packet(content: bytes, kind: str, credential: dict, compress=False) -> bytes:
+def encrypted_packet(content: bytes, kind: str, credential: dict, compress=False, precompressed=False) -> bytes:
     nonce = os.urandom(12)
     key = base64.b64decode(credential["key"])
-    if compress:
+    if compress and not precompressed:
         content = gzip.compress(content, mtime=0)
     return json.dumps({"salt": credential["salt"], "nonce": base64.b64encode(nonce).decode(),
                        "ciphertext": base64.b64encode(AESGCM(key).encrypt(nonce, content, None)).decode(),
-                       "type": kind, "compression": 'gzip' if compress else None, "iterations": 210000, "version": 1}).encode()
+                       "type": kind, "compression": 'gzip' if compress or precompressed else None, "iterations": 210000, "version": 1}).encode()
+
+
+def compressed_file(path: Path) -> bytes:
+    """流式压缩大型明细，读取过程不在内存中展开完整文件。"""
+    output = io.BytesIO()
+    with path.open('rb') as source, gzip.GzipFile(fileobj=output, mode='wb', mtime=0) as compressed:
+        shutil.copyfileobj(source, compressed, length=512 * 1024)
+    return output.getvalue()
 
 
 def latest_report(root: Path) -> Path:
     # 扫描中的部分结果留在历史页，首页始终优先显示最新一轮完整扫描。
     completed = []
+    confirmed = []
     for path in (root / "runs").glob("live-*/summary.json"):
         if not re.fullmatch(r"live-[0-9a-f]{20}", path.parent.name):
             continue
@@ -109,6 +120,10 @@ def latest_report(root: Path) -> Path:
             continue
         if data.get("status") == "complete" and (path.parent / "index.html").is_file():
             completed.append((data.get("end_bj_exclusive", ""), data.get("updated_at_bj", ""), path.parent))
+            if data.get("stage") == "4h_and_15m" and data.get("validation_ok"):
+                confirmed.append((data.get("end_bj_exclusive", ""), data.get("updated_at_bj", ""), path.parent))
+    if confirmed:
+        return max(confirmed)[2]
     return max(completed)[2] if completed else root / "latest"
 
 
@@ -146,6 +161,7 @@ def report_path(root: Path, url: str) -> Path | None:
 def handler(root: Path, credential: dict | None, redirect_https=False):
     class ReportHandler(BaseHTTPRequestHandler):
         def serve(self, head=False):
+            precompressed = False
             path = urllib.parse.urlsplit(self.path).path
             if path.startswith('/.well-known/acme-challenge/'):
                 token = path.removeprefix('/.well-known/acme-challenge/')
@@ -182,7 +198,11 @@ def handler(root: Path, credential: dict | None, redirect_https=False):
                 if target is None or not target.is_file():
                     self.send_error(404)
                     return
-                content = target.read_bytes()
+                if target.suffix == '.csv':
+                    content = compressed_file(target)
+                    precompressed = True
+                else:
+                    content = target.read_bytes()
                 kind = {".svg": "image/svg+xml", ".csv": "text/csv; charset=utf-8", ".json": "application/json; charset=utf-8", ".html": "text/html; charset=utf-8"}[target.suffix]
                 if target.suffix == ".html":
                     # 将图形与下载固定到本轮目录，下一轮完成时已打开的报告仍能读取原文件。
@@ -201,7 +221,7 @@ def handler(root: Path, credential: dict | None, redirect_https=False):
                         navigation += ('<p>' + html.escape(note) + '</p>').encode()
                     content = content.replace(b"<h1>", navigation + b"<h1>", 1)
             compress = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get('compressed') == ['1']
-            return self.respond(encrypted_packet(content, kind, credential, compress), 'application/json', head)
+            return self.respond(encrypted_packet(content, kind, credential, compress, precompressed), 'application/json', head)
 
         def respond(self, content, kind, head):
             compressed = kind.startswith('text/html') and 'gzip' in self.headers.get('Accept-Encoding', '')

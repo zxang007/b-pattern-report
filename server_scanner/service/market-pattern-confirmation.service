@@ -1,0 +1,29 @@
+[Unit]
+Description=Fifteen-minute platform confirmation after four-hour market scan
+Wants=network-online.target
+After=network-online.target market-pattern-scanner.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/market-pattern-scanner/current
+Environment=MARKET_SCANNER_SERVER=qqbot
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -u /home/ubuntu/market-pattern-scanner/current/platform_pipeline.py
+Restart=on-failure
+RestartSec=15min
+TimeoutStartSec=3h
+Nice=15
+CPUQuota=100%
+MemoryHigh=600M
+MemoryMax=850M
+TasksMax=32
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/market-pattern-scanner/state
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

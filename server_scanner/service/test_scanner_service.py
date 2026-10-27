@@ -149,6 +149,24 @@ class ScannerTests(unittest.TestCase):
         (root / "latest").symlink_to(partial)
         self.assertEqual(report_server.report_path(root, "/latest/index.html"), partial / "index.html")
 
+    def test_joint_results_remain_visible_until_next_joint_scan_completes(self):
+        root = Path(self.temp.name)
+        prior = root / 'runs' / ('live-' + '1' * 20)
+        fresh_four_h = root / 'runs' / ('live-' + '2' * 20)
+        fresh_joint = root / 'runs' / ('live-' + '3' * 20)
+        for folder in [prior, fresh_four_h, fresh_joint]:
+            folder.mkdir(parents=True)
+            (folder / 'index.html').write_text('<h1>报告</h1>')
+        scanner.atomic_json(prior / 'summary.json', {'status': 'complete', 'stage': '4h_and_15m',
+            'validation_ok': True, 'end_bj_exclusive': '2026-10-27T16:00:00+08:00'})
+        scanner.atomic_json(fresh_four_h / 'summary.json', {'status': 'complete', 'end_bj_exclusive': '2026-10-27T20:00:00+08:00'})
+        scanner.atomic_json(fresh_joint / 'summary.json', {'status': 'running', 'stage': '4h_and_15m',
+            'end_bj_exclusive': '2026-10-27T20:00:00+08:00'})
+        self.assertEqual(report_server.latest_report(root), prior)
+        scanner.atomic_json(fresh_joint / 'summary.json', {'status': 'complete', 'stage': '4h_and_15m',
+            'validation_ok': True, 'end_bj_exclusive': '2026-10-27T20:00:00+08:00'})
+        self.assertEqual(report_server.latest_report(root), fresh_joint)
+
     def test_report_encryption_rejects_wrong_key_and_tampering(self):
         key = bytes(range(32))
         credential = {"key": base64.b64encode(key).decode(), "salt": base64.b64encode(b"sample-salt-12345").decode()}
@@ -170,6 +188,17 @@ class ScannerTests(unittest.TestCase):
         decrypted = AESGCM(key).decrypt(base64.b64decode(packet['nonce']), base64.b64decode(packet['ciphertext']), None)
         self.assertEqual(gzip.decompress(decrypted), content)
         self.assertLess(len(decrypted), len(content) // 10)
+
+    def test_large_csv_stream_compression_retains_download_bytes(self):
+        target = Path(self.temp.name) / 'matches.csv'
+        original = ('币名,时间,成交额\nTUTUSDT,2026-07-14 00:15,114571.84759\n' * 1000).encode()
+        target.write_bytes(original)
+        payload = report_server.compressed_file(target)
+        credential = {'key': base64.b64encode(b'z' * 32).decode(), 'salt': 'test-salt'}
+        packet = json.loads(report_server.encrypted_packet(payload, 'text/csv', credential, compress=True, precompressed=True))
+        plaintext = AESGCM(b'z' * 32).decrypt(base64.b64decode(packet['nonce']), base64.b64decode(packet['ciphertext']), None)
+        self.assertEqual(packet['compression'], 'gzip')
+        self.assertEqual(gzip.decompress(plaintext), original)
 
 
 class ReclaimTests(unittest.TestCase):

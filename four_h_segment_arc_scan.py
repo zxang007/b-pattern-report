@@ -15,6 +15,7 @@ import screen_aria_4h_pattern as base
 
 
 BJ = dt.timezone(dt.timedelta(hours=8))
+MIN_RECLAIM_QUOTE_VOLUME = Decimal("900000")
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class SegmentArcMatch:
     score: Decimal
     blue_below_close_count: int = 0
     breakout_volume_ratio: Decimal = Decimal("0")
+    yellow_highest_close: Decimal | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -126,12 +128,9 @@ def departure_indexes(
     candles: list[base.Candle],
     wash_start_i: int,
     hold_line: Decimal,
-    max_wash_bars: int | None = None,
 ) -> list[int]:
     indexes: list[int] = []
     end_i = len(candles)
-    if max_wash_bars is not None:
-        end_i = min(end_i, wash_start_i + max(1, max_wash_bars) + 1)
     for index in range(wash_start_i + 1, end_i):
         segment = candles[wash_start_i:index]
         if any(candle.close < hold_line for candle in segment):
@@ -243,14 +242,12 @@ def remove_wash_covering_later_setup(matches: list[SegmentArcMatch]) -> list[Seg
     return [match for index, match in enumerate(matches) if index not in dropped]
 
 
-def selection_key(match: SegmentArcMatch) -> tuple[int, Decimal, Decimal, Decimal]:
-    total_bars = (match.wash_end.open_time - match.yellow_start.open_time) // (4 * 60 * 60 * 1000) + 1
+def selection_key(match: SegmentArcMatch) -> tuple[Decimal, Decimal, Decimal]:
     hold_gap = pct(match.wash_min_close, match.hold_line)
     yellow_up = pct(match.hold_line, match.yellow_start.low)
     return (
         abs(hold_gap),
         -yellow_up,
-        total_bars,
         blue_drop_abs_pct(match),
     )
 
@@ -377,10 +374,15 @@ def first_wash_start_after_reclaim(candles: list[base.Candle], reclaim_i: int, h
     return None
 
 
+def is_yellow_reclaim(candle: base.Candle, yellow_highest_close: Decimal) -> bool:
+    """红箭头必须收盘突破整个黄区最高收盘价，且单根成交额至少九十万 USDT。"""
+    return candle.close > yellow_highest_close and candle.quote_volume >= MIN_RECLAIM_QUOTE_VOLUME
+
+
 def first_hold_reclaim_after_low(candles: list[base.Candle], blue_low_i: int, hold_line: Decimal) -> int | None:
-    """Return the first close back above hold after the down-kill low."""
+    """从蓝区低点起寻找第一根满足黄区突破价格和成交额条件的已收盘 K 线。"""
     for index in range(blue_low_i, len(candles)):
-        if candles[index].close >= hold_line:
+        if is_yellow_reclaim(candles[index], hold_line):
             return index
     return None
 
@@ -452,19 +454,15 @@ def canonical_yellow_start_i(candles: list[base.Candle], start_i: int, yellow_en
     return local_start_i
 
 
-def structure_rank_key(match: SegmentArcMatch) -> tuple[Decimal, Decimal, int, Decimal, Decimal, Decimal, Decimal]:
-    total_bars = (match.wash_end.open_time - match.yellow_start.open_time) // (4 * 60 * 60 * 1000) + 1
+def structure_rank_key(match: SegmentArcMatch) -> tuple[Decimal, Decimal, Decimal, Decimal]:
     blue_drop = blue_drop_abs_pct(match)
     peak_gap = pct(match.wash_peak, match.hold_line)
     min_gap = wash_hold_gap_pct(match)
     return (
         abs(min_gap),
         peak_gap,
-        total_bars,
         -match.breakout_volume_ratio,
-        -blue_close_below_ratio(match),
         blue_drop,
-        -Decimal(structure_mass(match)),
     )
 
 
@@ -619,131 +617,87 @@ def remove_dominated_substructures(matches: list[SegmentArcMatch]) -> list[Segme
 def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespace) -> list[SegmentArcMatch]:
     matches: list[SegmentArcMatch] = []
     n = len(candles)
-    max_market_yellow_bars = getattr(args, "max_market_yellow_bars", None)
-    max_market_blue_bars = getattr(args, "max_market_blue_bars", None)
-    max_market_wash_bars = getattr(args, "max_market_wash_bars", None)
+    min_blue_drop_pct = getattr(args, "min_blue_drop_pct", None)
 
-    for yellow_start_i in range(0, n - 3):
-        blue_start_max = n - 3
-        if max_market_yellow_bars is not None:
-            blue_start_max = min(blue_start_max, yellow_start_i + max(1, max_market_yellow_bars))
-        for blue_start_i in range(yellow_start_i + 1, blue_start_max + 1):
-            yellow_end_i = blue_start_i - 1
-            effective_yellow_peak_i = yellow_end_i
-            if effective_yellow_peak_i <= yellow_start_i:
-                continue
-            effective_yellow_start_i = canonical_yellow_start_i(candles, yellow_start_i, effective_yellow_peak_i)
-            if effective_yellow_start_i >= effective_yellow_peak_i:
-                continue
-            yellow_rally_span = candles[effective_yellow_start_i : effective_yellow_peak_i + 1]
-            if not is_coherent_yellow_rally(yellow_rally_span):
-                continue
-            yellow_low = min(c.low for c in yellow_rally_span)
-            yellow_max_close = max(c.close for c in yellow_rally_span)
-            hold_line = candles[effective_yellow_peak_i].close
+    # 黄区按自身最高收盘价结束，蓝区由后续跌回该价下方的价格关系开始。
+    # 所有区域都由价格和成交额决定，不按固定根数截断或淘汰。
+    for yellow_end_i in range(1, n - 2):
+        hold_line = candles[yellow_end_i].close
+        blue_start_i = yellow_end_i + 1
+        if candles[blue_start_i].close >= hold_line:
+            continue
+        yellow_starts = []
+        yellow_low = candles[yellow_end_i].low
+        for yellow_start_i in range(yellow_end_i - 1, -1, -1):
+            candle = candles[yellow_start_i]
+            if candle.close > hold_line:
+                break
+            yellow_low = min(yellow_low, candle.low)
             if hold_line <= yellow_low:
                 continue
+            if is_coherent_yellow_rally(candles[yellow_start_i:yellow_end_i + 1]):
+                yellow_starts.append((yellow_start_i, yellow_low))
+        if not yellow_starts:
+            continue
 
-            breakout_max = n - 2
-            if max_market_blue_bars is not None:
-                breakout_max = min(breakout_max, blue_start_i + max(1, max_market_blue_bars))
-            for breakout_i in range(blue_start_i + 1, breakout_max + 1):
-                probe_blue_low_i = min(range(blue_start_i, breakout_i + 1), key=lambda i: candles[i].low)
-                effective_blue_start_i = blue_start_i
-                if effective_blue_start_i >= breakout_i:
-                    continue
-                blue_low_i = min(range(effective_blue_start_i, breakout_i + 1), key=lambda i: candles[i].low)
-                if blue_low_i < effective_blue_start_i:
-                    continue
-                blue_low_candle = candles[blue_low_i]
-                blue_low = blue_low_candle.low
-                if blue_low >= hold_line:
-                    continue
-                effective_blue_start_i = normalized_blue_start_i(
-                    candles,
-                    effective_blue_start_i,
-                    blue_low_i,
-                    hold_line,
-                )
-                if effective_blue_start_i >= breakout_i:
-                    continue
-                yellow_end_i = effective_blue_start_i - 1
-                min_blue_drop_pct = getattr(args, "min_blue_drop_pct", None)
-                if min_blue_drop_pct is not None and abs(pct(blue_low, hold_line)) < min_blue_drop_pct:
-                    continue
-                blue_before_breakout = candles[effective_blue_start_i:breakout_i]
-                if not blue_start_has_clean_boundary(
-                    candles,
-                    effective_yellow_peak_i,
-                    effective_blue_start_i,
-                    blue_low_i,
-                    hold_line,
-                    args,
-                ):
-                    continue
-                if not is_blue_breakout_end(candles, breakout_i, hold_line, args, blue_before_breakout):
-                    continue
-                reclaim_i = first_hold_reclaim_after_low(candles, blue_low_i, hold_line)
-                if reclaim_i is None or reclaim_i >= n - 1:
-                    continue
-                if reclaim_i < effective_blue_start_i:
-                    continue
-                blue_region = candles[effective_blue_start_i : reclaim_i + 1]
-                if max_market_blue_bars is not None and len(blue_region) > max_market_blue_bars:
-                    continue
-                blue_below_close_count = sum(1 for candle in blue_region if candle.close < hold_line)
-                max_blue_below_close_count = getattr(args, "max_blue_below_close_count", None)
-                if max_blue_below_close_count is not None and blue_below_close_count > max_blue_below_close_count:
-                    continue
-                wash_start_i = reclaim_i
-                wash_start = candles[wash_start_i]
-                blue_average_volume = average_quote_volume(candles[effective_blue_start_i:reclaim_i])
-                breakout_volume_ratio = (
-                    wash_start.quote_volume / blue_average_volume
-                    if blue_average_volume > 0
-                    else Decimal("0")
-                )
+        blue_low_i = blue_start_i
+        processed_low_i = None
+        for reclaim_i in range(blue_start_i, n - 1):
+            if candles[reclaim_i].low < candles[blue_low_i].low:
+                blue_low_i = reclaim_i
+            if processed_low_i == blue_low_i:
+                continue
+            reclaim = candles[reclaim_i]
+            if not is_yellow_reclaim(reclaim, hold_line):
+                continue
+            # 同一下杀低点只取首次满足价格与成交额条件的突破，后续新低可形成新结构。
+            processed_low_i = blue_low_i
+            blue_low_candle = candles[blue_low_i]
+            blue_low = blue_low_candle.low
+            if blue_low >= hold_line:
+                continue
+            if min_blue_drop_pct is not None and abs(pct(blue_low, hold_line)) < min_blue_drop_pct:
+                continue
+            blue_region = candles[blue_start_i:reclaim_i + 1]
+            blue_below_close_count = sum(c.close < hold_line for c in blue_region)
+            blue_average_volume = average_quote_volume(candles[blue_start_i:reclaim_i])
+            breakout_volume_ratio = reclaim.quote_volume / blue_average_volume if blue_average_volume > 0 else Decimal("0")
 
-                departures = departure_indexes(candles, wash_start_i, hold_line, max_market_wash_bars)
-                for departure_pos, departure_i in enumerate(departures):
-                    wash = candles[wash_start_i:departure_i]
-                    min_market_wash_bars = getattr(args, "min_market_wash_bars", None)
-                    if min_market_wash_bars is not None and len(wash) < min_market_wash_bars:
-                        continue
-                    if max_market_wash_bars is not None and len(wash) > max_market_wash_bars:
-                        continue
-                    ok, wash_min_close, wash_peak = is_valid_wash(wash, hold_line, args)
-                    if ok and is_tight_wash_above_hold(wash, hold_line, args):
-                        if wash_min_close < yellow_max_close:
-                            continue
-                        if not post_departure_confirms_wash_peak(candles, departure_i, wash_peak, args):
-                            continue
-                        if not month_holds_wash_peak_after_departure(candles, departure_i, wash_peak, args):
-                            continue
-                        wash_end = candles[departure_i - 1]
-                        score = score_match(hold_line, yellow_low, blue_low, wash_min_close, wash_peak)
-                        matches.append(
-                            SegmentArcMatch(
+            # 白区保持黄区最高收盘价，放量且收盘创新高的下一根作为脱离点。
+            wash_min_close = reclaim.close
+            wash_peak = reclaim.close
+            wash_max_volume = reclaim.quote_volume
+            for departure_i in range(reclaim_i + 1, n):
+                departure = candles[departure_i]
+                if departure.close < hold_line:
+                    break
+                if departure.close > wash_peak and departure.quote_volume >= wash_max_volume:
+                    if month_holds_wash_peak_after_departure(candles, departure_i, wash_peak, args):
+                        for yellow_start_i, yellow_low in yellow_starts:
+                            matches.append(SegmentArcMatch(
                                 symbol=symbol,
-                                yellow_start=candles[effective_yellow_start_i],
-                                yellow_peak=candles[effective_yellow_peak_i],
+                                yellow_start=candles[yellow_start_i],
+                                yellow_peak=candles[yellow_end_i],
                                 yellow_end=candles[yellow_end_i],
-                                blue_start=candles[effective_blue_start_i],
+                                blue_start=candles[blue_start_i],
                                 blue_low=blue_low_candle,
-                                reclaim=candles[reclaim_i],
-                                wash_start=wash_start,
-                                wash_end=wash_end,
+                                reclaim=reclaim,
+                                wash_start=reclaim,
+                                wash_end=candles[departure_i - 1],
                                 hold_line=hold_line,
                                 wash_min_close=wash_min_close,
                                 wash_peak=wash_peak,
-                                score=score,
+                                score=score_match(hold_line, yellow_low, blue_low, wash_min_close, wash_peak),
                                 blue_below_close_count=blue_below_close_count,
                                 breakout_volume_ratio=breakout_volume_ratio,
-                            )
-                        )
+                                yellow_highest_close=hold_line,
+                            ))
+                wash_min_close = min(wash_min_close, departure.close)
+                wash_peak = max(wash_peak, departure.close)
+                wash_max_volume = max(wash_max_volume, departure.quote_volume)
 
     matches = remove_yellow_covering_wash(matches)
-    matches = resolve_blue_inside_wash_conflicts(matches)
+    # 后续局部结构的出现不能抹掉此前已经满足条件的完整结构。
     sort_mode = getattr(args, "sort", "time")
     if sort_mode == "score":
         return sorted(matches, key=lambda m: m.score, reverse=True)

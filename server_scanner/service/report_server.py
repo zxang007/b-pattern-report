@@ -118,6 +118,8 @@ def report_path(root: Path, url: str) -> Path | None:
     )
     allowed = allowed or (len(relative) == 2 and relative[0] == "charts" and
                           re.fullmatch(r"[0-9a-f]{32}\.svg", relative[1]) is not None)
+    allowed = allowed or (len(relative) == 2 and relative[0] == "groups" and
+                          re.fullmatch(r"[0-9a-f]{24}\.html", relative[1]) is not None)
     if not allowed:
         return None
     candidate = folder.joinpath(*relative).resolve()

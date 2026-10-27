@@ -33,14 +33,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--progress-every", type=int, default=1, help="无命中进度每多少个交易对打印一次，默认 1。命中和错误始终打印。")
     parser.add_argument("--max-symbols", type=int, default=0, help="最多扫描多少个交易对，0 表示全部。")
     parser.add_argument("--include-multiplier-symbols", action="store_true", help="包含 1000/1000000 等面值倍数合约，默认自动市场扫描时排除。")
-    parser.add_argument("--merge-cluster-gap-bars", type=int, default=0, help="同币候选默认只合并相同蓝低点和洗盘终点；大于0时再合并重叠或相邻结构。")
+    parser.add_argument("--merge-cluster-gap-bars", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--sort", choices=("time", "score", "compact", "quality"), default="quality")
     parser.add_argument("--min-blue-drop-pct", type=Decimal, default=Decimal("6.0"), help="蓝色下杀低点相对黄色 hold 收盘价的最小跌幅，默认 6%%。")
-    parser.add_argument("--max-market-yellow-bars", type=int, default=48, help="市场扫描里黄色拉升区总跨度上限，避免把长周期横盘/慢涨当成拉升，默认 48。")
-    parser.add_argument("--max-market-blue-bars", type=int, default=24, help="市场扫描里蓝色下杀区域总跨度上限，避免把长周期阴跌当成下杀，默认 24。")
-    parser.add_argument("--max-blue-below-close-count", type=int, default=24, help="蓝区收盘低于 hold 的K线数量上限，避免把长时间阴跌当成下杀区，默认 24。")
-    parser.add_argument("--min-market-wash-bars", type=int, default=4, help="市场扫描里白色洗盘区至少需要多少根4小时K，默认 4。")
-    parser.add_argument("--max-market-wash-bars", type=int, default=36, help="市场扫描里白色洗盘区总跨度上限，避免把长期横盘当成洗盘，默认 36。")
+    # 兼容历史命令参数；这些根数参数不再传入识别或市场过滤逻辑。
+    for name in ("max-market-yellow-bars", "max-market-blue-bars", "max-blue-below-close-count", "min-market-wash-bars", "max-market-wash-bars"):
+        parser.add_argument("--" + name, type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--timeout", type=float, default=20.0)
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--retry-delay", type=float, default=0.8)
@@ -104,11 +102,6 @@ def scan_args(args: argparse.Namespace) -> argparse.Namespace:
     return argparse.Namespace(
         sort=args.sort,
         min_blue_drop_pct=args.min_blue_drop_pct,
-        max_market_yellow_bars=args.max_market_yellow_bars,
-        max_market_blue_bars=args.max_market_blue_bars,
-        max_blue_below_close_count=args.max_blue_below_close_count,
-        min_market_wash_bars=args.min_market_wash_bars,
-        max_market_wash_bars=args.max_market_wash_bars,
     )
 
 
@@ -117,17 +110,6 @@ def market_filter(matches: list[segment_scan.SegmentArcMatch], args: argparse.Na
     for match in matches:
         blue_drop = abs(segment_scan.pct(match.blue_low.low, match.hold_line))
         if blue_drop < args.min_blue_drop_pct:
-            continue
-        if segment_scan.candle_count(match.yellow_start.open_time, match.yellow_end.open_time) > args.max_market_yellow_bars:
-            continue
-        if segment_scan.candle_count(match.blue_start.open_time, match.reclaim.open_time) > args.max_market_blue_bars:
-            continue
-        if match.blue_below_close_count > args.max_blue_below_close_count:
-            continue
-        wash_bars = segment_scan.wash_bar_count(match)
-        if wash_bars < args.min_market_wash_bars:
-            continue
-        if wash_bars > args.max_market_wash_bars:
             continue
         kept.append(match)
     return kept
@@ -189,12 +171,15 @@ def load_archive_candles(
     return sorted({item.open_time: item for item in candles}.values(), key=lambda item: item.open_time)
 
 
-def dedupe(matches: list[segment_scan.SegmentArcMatch], cluster_gap_bars: int = 6) -> list[segment_scan.SegmentArcMatch]:
-    best: dict[tuple[str, int, int, int, int, Decimal], segment_scan.SegmentArcMatch] = {}
+def dedupe(matches: list[segment_scan.SegmentArcMatch], cluster_gap_bars: int = 0) -> list[segment_scan.SegmentArcMatch]:
+    best: dict[tuple, segment_scan.SegmentArcMatch] = {}
     for match in matches:
         key = (
             match.symbol,
+            match.yellow_start.open_time,
+            match.yellow_end.open_time,
             match.yellow_peak.open_time,
+            match.blue_start.open_time,
             match.blue_low.open_time,
             match.wash_start.open_time,
             match.wash_end.open_time,
@@ -204,32 +189,8 @@ def dedupe(matches: list[segment_scan.SegmentArcMatch], cluster_gap_bars: int = 
         if current is None or market_rank_key(match) < market_rank_key(current):
             best[key] = match
     collapsed = sorted(best.values(), key=lambda item: (item.symbol, item.yellow_start.open_time, item.wash_end.open_time))
-    if cluster_gap_bars <= 0:
-        return collapsed
-    gap_ms = max(0, cluster_gap_bars) * 4 * 60 * 60 * 1000
-    clustered: list[segment_scan.SegmentArcMatch] = []
-    cluster: list[segment_scan.SegmentArcMatch] = []
-    cluster_end = 0
-    current_symbol = ""
-
-    def choose_cluster(items: list[segment_scan.SegmentArcMatch]) -> segment_scan.SegmentArcMatch:
-        return min(items, key=market_rank_key)
-
-    for match in collapsed:
-        start = match.yellow_start.open_time
-        end = match.wash_end.open_time
-        if not cluster or match.symbol != current_symbol or start > cluster_end + gap_ms:
-            if cluster:
-                clustered.append(choose_cluster(cluster))
-            cluster = [match]
-            current_symbol = match.symbol
-            cluster_end = end
-            continue
-        cluster.append(match)
-        cluster_end = max(cluster_end, end)
-    if cluster:
-        clustered.append(choose_cluster(cluster))
-    return clustered
+    # 仅去除完整边界重复项，保留不同黄区起点，不按相邻根数合并结构。
+    return collapsed
 
 
 def bj_dt(open_time: int) -> dt.datetime:
@@ -327,6 +288,8 @@ def write_rows(path: str, rows: list[segment_scan.SegmentArcMatch]) -> None:
                 "wash_start_calendar_distance_days",
                 "structure_calendar_score",
                 "wash_wick_boundary_score",
+                "yellow_highest_close",
+                "reclaim_quote_volume",
             ]
         )
         for match in rows:
@@ -357,6 +320,8 @@ def write_rows(path: str, rows: list[segment_scan.SegmentArcMatch]) -> None:
                     wash_distance,
                     structure_calendar_score(match),
                     f"{wash_wick_boundary_score(match):.4f}",
+                    segment_scan.dstr(match.yellow_highest_close if match.yellow_highest_close is not None else match.hold_line),
+                    segment_scan.dstr(match.reclaim.quote_volume),
                 ]
             )
 

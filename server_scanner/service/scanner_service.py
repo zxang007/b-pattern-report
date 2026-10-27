@@ -264,7 +264,7 @@ def worker(source: Path, output: Path) -> None:
     raw = segment.find_matches(candles, data["symbol"], market.scan_args(args))
     selected = market.dedupe(market.market_filter(raw, args), args.merge_cluster_gap_bars)
     selected.sort(key=lambda match: (market.market_rank_key(match), -match.wash_end.open_time))
-    # 不截断每币数量，也不更改识别、过滤、排序和市场去重规则。
+    # 不截断候选数量，保留通过结构关系与成交额检查的不同边界候选。
     market.write_rows(str(output.with_suffix(".csv")), selected)
     atomic_json(output, {"raw_candidates": len(raw), "matches": len(selected)})
 
@@ -306,7 +306,7 @@ def export_report(store: Store, root: Path, run: Path, summary: dict, infos: lis
                 reader = csv.DictReader(handle)
                 fields = reader.fieldnames
                 rows.extend(reader)
-    rows.sort(key=lambda row: (row["wash_end_bj"], row["symbol"]), reverse=True)
+    rows.sort(key=lambda row: (row["wash_end_bj"], row["wash_start_bj"], row["symbol"]), reverse=True)
     fields = fields or ["symbol", "blue_low_bj", "wash_start_bj", "wash_end_bj"]
     text = io.StringIO()
     writer = csv.DictWriter(text, fieldnames=fields)
@@ -324,6 +324,10 @@ def export_report(store: Store, root: Path, run: Path, summary: dict, infos: lis
         import screen_aria_4h_pattern as live
     charts = run / "charts"
     charts.mkdir(exist_ok=True)
+    group_pages = run / "groups"
+    group_pages.mkdir(exist_ok=True)
+    columns = '<tr><th>拉升开始</th><th>拉升结束</th><th>黄区最高收盘</th><th>洗盘结束</th><th>红箭头时间</th><th>突破成交额 USDT</th><th>全部候选图</th></tr>'
+    styles = '<style>body{max-width:1200px;margin:32px auto;padding:0 20px;background:#111827;color:#e5e7eb;font:16px/1.7 system-ui}a{color:#93c5fd}table{border-collapse:collapse;white-space:nowrap}td,th{padding:8px 14px;border-bottom:1px solid #374151}.table{overflow:auto}img{display:block;width:100%;height:auto}</style>'
     for key, variants in groups.items():
         row = variants[0]
         contents = []
@@ -343,11 +347,19 @@ def export_report(store: Store, root: Path, run: Path, summary: dict, infos: lis
             chart_count += 1
             first_chart = first_chart or filename
             cells = "".join(f"<td>{html.escape(variant.get(col, ''))}</td>" for col in
-                            ("yellow_start_bj", "yellow_end_bj", "yellow_hold_close", "wash_end_bj"))
+                            ("yellow_start_bj", "yellow_end_bj", "yellow_highest_close", "wash_end_bj", "reclaim_bj", "reclaim_quote_volume"))
             contents.append(f'<tr>{cells}<td><a href="charts/{filename}">打开图形</a></td></tr>')
+        # 全部边界和图形均保存，首页只载入每组概览，手机展开后可进入完整候选页。
+        group_page = (f'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+                      f'<title>{html.escape(row["symbol"])} 全部候选</title>{styles}<h1>{html.escape(row["symbol"])} · {len(variants)} 条候选</h1>'
+                      f'<p><a href="../index.html">返回本轮扫描</a> · <a href="../matches.csv">完整候选 CSV</a></p>'
+                      f'<p>下杀低点：{row["blue_low_bj"]} · 洗盘起点：{row["wash_start_bj"]}。所有边界候选均在下表，可逐条打开结构图。</p>'
+                      f'<div class="table"><table>{columns}{"".join(contents).replace(chr(34) + "charts/", chr(34) + "../charts/")}</table></div></html>')
+        atomic_text(group_pages / (key + '.html'), group_page)
         cards.append(f"<details><summary>{html.escape(row['symbol'])} · 下杀 {row['blue_low_bj']} · 洗盘 {row['wash_start_bj']} · {len(variants)} 条候选</summary>"
                      f'<a href="charts/{first_chart}"><img loading="lazy" src="charts/{first_chart}" alt="{html.escape(row["symbol"])} 黄蓝白结构图"></a>'
-                     f"<div class='table'><table><tr><th>拉升开始</th><th>拉升结束</th><th>hold</th><th>洗盘结束</th><th>全部候选图</th></tr>{''.join(contents)}</table></div></details>")
+                     f"<div class='table'><table>{columns}{contents[0]}</table></div>"
+                     f'<p><a href="groups/{key}.html">查看本组全部 {len(variants)} 条候选</a></p></details>')
     summary.update({"matches": len(rows), "charts": chart_count, "structure_groups": len(groups), "updated_at_bj": now_text()})
     atomic_json(run / "summary.json", summary)
     events = [dict(row) for row in store.db.execute("SELECT * FROM events WHERE scope=? ORDER BY id", (scope,))]
@@ -359,7 +371,8 @@ def export_report(store: Store, root: Path, run: Path, summary: dict, infos: lis
 <h1>四小时形态扫描</h1><p>更新时间：{summary['updated_at_bj']} · 状态：{html.escape(summary['status'])}<br>
 范围（北京时间）：{summary['start_bj']} 至 {summary['end_bj_exclusive']}（不含终点）<br>
 已完成 {summary['completed_symbols']}/{summary['total_symbols']} 个交易对，{len(rows)} 条候选，{len(groups)} 组结构。<br>
-只使用已收盘 K 线。保留全部候选；同一下杀低点和洗盘起点归组展示。未出现在当前窗口不等于交易信号失效。</p>
+只使用已收盘 K 线。红箭头收盘价必须高于黄区最高收盘价，单根成交额至少 900,000 USDT；黄、蓝、白区域不按固定根数筛选。<br>
+保留全部候选；同一下杀低点和洗盘起点归组展示。未出现在当前窗口不等于交易信号失效。</p>
 <p><a href="matches.csv">完整候选 CSV</a> · <a href="summary.json">运行状态</a> · <a href="events.json">结构变化记录</a> · <a href="failed_symbols.json">失败列表</a></p>
 {''.join(cards) or '<p>当前没有已完成扫描的命中候选；请同时检查完成数量与失败列表。</p>'}</html>"""
     atomic_text(run / "index.html", page)

@@ -4,6 +4,7 @@ import datetime as dt
 import base64
 import json
 import gzip
+from decimal import Decimal
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +14,9 @@ from cryptography.exceptions import InvalidTag
 
 import scanner_service as scanner
 import report_server
+import four_h_segment_arc_scan as segment
+import scan_four_h_segment_arc_market as market
+from screen_aria_4h_pattern import Candle
 
 
 def api_row(stamp):
@@ -107,7 +111,11 @@ class ScannerTests(unittest.TestCase):
         (root / "latest").symlink_to(run)
         self.assertEqual(report_server.report_path(root, "/"), run / "index.html")
         self.assertEqual(report_server.report_path(root, "/latest/matches.csv"), run / "matches.csv")
+        group = "a" * 24 + ".html"
+        self.assertEqual(report_server.report_path(root, "/latest/groups/" + group), run / "groups" / group)
         for path in ("/scanner.sqlite3", "/config.json", "/latest/../scanner.sqlite3", "/latest/%2e%2e/config.json", "/latest/by_symbol/TUTUSDT.input.json", "/latest/charts/../summary.json"):
+            self.assertIsNone(report_server.report_path(root, path), path)
+        for path in ("/latest/groups/config.json", "/latest/groups/../summary.json", "/latest/groups/not-a-group.html"):
             self.assertIsNone(report_server.report_path(root, path), path)
 
     def test_latest_keeps_complete_scan_while_next_scan_runs(self):
@@ -162,6 +170,60 @@ class ScannerTests(unittest.TestCase):
         decrypted = AESGCM(key).decrypt(base64.b64decode(packet['nonce']), base64.b64decode(packet['ciphertext']), None)
         self.assertEqual(gzip.decompress(decrypted), content)
         self.assertLess(len(decrypted), len(content) // 10)
+
+
+class ReclaimTests(unittest.TestCase):
+    def candle(self, index, close, amount, high=None):
+        close = Decimal(str(close))
+        return Candle(index * scanner.BAR_MS, close - Decimal('0.2'),
+                      Decimal(str(high)) if high is not None else close + Decimal('0.5'),
+                      close - Decimal('0.5'), close, Decimal('999999999'), Decimal(str(amount)))
+
+    def test_wick_or_equal_close_is_not_yellow_breakout(self):
+        self.assertFalse(segment.is_yellow_reclaim(self.candle(0, 9, 2000000, high=20), Decimal('10')))
+        self.assertFalse(segment.is_yellow_reclaim(self.candle(0, 10, 2000000), Decimal('10')))
+
+    def test_amount_is_quote_turnover_and_accepts_900k_boundary(self):
+        self.assertFalse(segment.is_yellow_reclaim(self.candle(0, 11, '899999.99'), Decimal('10')))
+        self.assertTrue(segment.is_yellow_reclaim(self.candle(0, 11, 900000), Decimal('10')))
+
+    def test_arrow_selects_first_candle_meeting_both_conditions(self):
+        candles = [self.candle(0, 9, 2000000, high=20), self.candle(1, 11, 899999), self.candle(2, 12, 900000)]
+        self.assertEqual(segment.first_hold_reclaim_after_low(candles, 0, Decimal('10')), 2)
+
+    def test_long_regions_and_short_wash_are_not_filtered_by_bar_counts(self):
+        for blue_length, wash_length in ((30, 40), (2, 1)):
+            closes = [8, 9, 10] + [8] * blue_length + [11] * wash_length + [12]
+            reclaim_i = 3 + blue_length
+            candles = [self.candle(i, close, 900000 if i == reclaim_i else 1000000 if i == len(closes) - 1 else 100)
+                       for i, close in enumerate(closes)]
+            args = scanner.core_defaults()
+            args.max_market_yellow_bars = args.max_market_blue_bars = args.max_blue_below_close_count = 1
+            args.min_market_wash_bars = 999
+            args.max_market_wash_bars = 1
+            found = segment.find_matches(candles, 'TESTUSDT', market.scan_args(args))
+            kept = market.market_filter(found, args)
+            self.assertTrue(any(m.reclaim.open_time == candles[reclaim_i].open_time and m.wash_end.open_time == candles[-2].open_time for m in kept))
+
+    def test_chart_arrow_records_actual_price_and_turnover(self):
+        import draw_four_h_segment_arc_matches_svg as chart
+        import xml.etree.ElementTree as ET
+        candles = [self.candle(i, close, 900000 if i == 5 else 1000000 if i == 7 else 100)
+                   for i, close in enumerate([8, 9, 10, 8, 9, 11, 11, 12])]
+        matches = segment.find_matches(candles, 'TESTUSDT', market.scan_args(scanner.core_defaults()))
+        rendered = ET.fromstring(chart.render('TESTUSDT', candles, matches[0]))
+        arrow = rendered.find('.//*[@id="reclaim-breakout"]')
+        self.assertEqual(Decimal(arrow.attrib['data-yellow-highest-close']), Decimal('10'))
+        self.assertEqual(Decimal(arrow.attrib['data-quote-volume']), Decimal('900000'))
+
+    def test_dedupe_keeps_alternative_yellow_boundaries(self):
+        from dataclasses import replace
+        candles = [self.candle(i, close, 900000 if i == 5 else 1000000 if i == 7 else 100)
+                   for i, close in enumerate([8, 9, 10, 8, 9, 11, 11, 12])]
+        match = segment.find_matches(candles, 'TESTUSDT', market.scan_args(scanner.core_defaults()))[0]
+        first = replace(match, yellow_start=candles[0])
+        later = replace(match, yellow_start=candles[1])
+        self.assertEqual(len(market.dedupe([first, later, first], 999)), 2)
 
 
 if __name__ == "__main__":

@@ -16,9 +16,10 @@ CORE_FILES = (
     "four_h_segment_arc_scan.py", "scan_four_h_segment_arc_market.py",
     "market_archive_pattern_scan.py", "screen_aria_4h_pattern.py",
     "draw_four_h_segment_arc_matches_svg.py", "draw_market_current_logic_from_csv.py",
+    "verified_examples.csv",
 )
 SERVICE_FILES = (
-    "scanner_service.py", "report_server.py", "report_front.py", "report_crypto.js", "setup_report_key.py", "renew_report_certificate.py", "test_scanner_service.py", "config.json", "README.md",
+    "scanner_service.py", "report_server.py", "report_front.py", "report_crypto.js", "setup_report_key.py", "renew_report_certificate.py", "test_scanner_service.py", "regression_reclaims.py", "config.json", "README.md",
     "market-pattern-scanner.service", "market-pattern-scanner.timer", "market-pattern-viewer.service",
     "market-pattern-http.service", "market-report-certificate.service", "market-report-certificate.timer",
     "market-pattern-front.service",

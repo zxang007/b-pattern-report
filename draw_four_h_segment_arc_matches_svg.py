@@ -144,6 +144,11 @@ def render(symbol: str, candles: list[base.Candle], match: scan.SegmentArcMatch)
     reclaim_i = candle_index(candles, match.reclaim)
     wash_start_i = candle_index(candles, match.wash_start)
     wash_end_i = candle_index(candles, match.wash_end)
+    yellow_span = candles[yellow_start_i:yellow_end_i + 1]
+    yellow_highest_close = max(c.close for c in yellow_span)
+    valid_reclaim = scan.is_yellow_reclaim(match.reclaim, yellow_highest_close)
+    signal_note = (f'红箭头：收盘 {match.reclaim.close} > 黄区最高收盘 {yellow_highest_close}；'
+                   f'成交额 {match.reclaim.quote_volume:,.2f} USDT ≥ 900,000 USDT。北京时间。') if valid_reclaim else '此候选不满足黄区收盘突破与九十万 USDT 成交额条件，不标红箭头。'
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
@@ -160,7 +165,7 @@ def render(symbol: str, candles: list[base.Candle], match: scan.SegmentArcMatch)
         "</defs>",
         '<rect width="100%" height="100%" fill="#111827"/>',
         f'<text x="{left}" y="38" fill="#f9fafb" font-family="Arial" font-size="26" font-weight="700">{html.escape(symbol)} 4h segment arc match</text>',
-        f'<text x="{left}" y="65" fill="#9ca3af" font-family="Arial" font-size="15">Logic-found: yellow rally area, blue down-kill area, white wash area. Beijing time.</text>',
+        f'<text x="{left}" y="65" fill="#9ca3af" font-family="Arial, sans-serif" font-size="15">{html.escape(signal_note)}</text>',
         f'<rect x="{left}" y="{price_top}" width="{chart_w}" height="{price_h}" fill="#172033" stroke="#263244"/>',
         f'<rect x="{left}" y="{vol_top}" width="{chart_w}" height="{vol_h}" fill="#111827" stroke="#263244"/>',
     ]
@@ -213,11 +218,15 @@ def render(symbol: str, candles: list[base.Candle], match: scan.SegmentArcMatch)
         )
 
     bx = x_for(reclaim_i, len(candles), left, chart_w)
-    body_top = min(match.reclaim.open, match.reclaim.close)
-    by = y_for(body_top, low, high, price_top, price_h)
-    parts.append(
-        f'<line x1="{bx - 18:.2f}" x2="{bx - 2:.2f}" y1="{by - 110:.2f}" y2="{by - 12:.2f}" stroke="#ff4d57" stroke-width="5" marker-end="url(#arrow-red)"/>'
-    )
+    by = y_for(match.reclaim.close, low, high, price_top, price_h)
+    if valid_reclaim:
+        parts.append(
+            f'<line id="reclaim-breakout" data-yellow-highest-close="{yellow_highest_close}" data-quote-volume="{match.reclaim.quote_volume}" '
+            f'data-reclaim-time="{match.reclaim.open_time}" x1="{bx - 18:.2f}" x2="{bx - 2:.2f}" y1="{max(price_top + 8, by - 90):.2f}" y2="{by - 12:.2f}" '
+            f'stroke="#ff4d57" stroke-width="5" marker-end="url(#arrow-red)"><title>{html.escape(signal_note)}</title></line>'
+        )
+    line_y = y_for(yellow_highest_close, low, high, price_top, price_h)
+    parts.append(f'<line x1="{yx1:.2f}" x2="{bx:.2f}" y1="{line_y:.2f}" y2="{line_y:.2f}" stroke="#facc15" stroke-width="1.4" stroke-dasharray="7 6"/>')
 
     for idx in [0, len(candles) // 2, len(candles) - 1]:
         candle = candles[idx]

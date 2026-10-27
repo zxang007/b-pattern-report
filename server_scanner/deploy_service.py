@@ -20,7 +20,7 @@ CORE_FILES = (
     "new_examples.csv",
 )
 SERVICE_FILES = (
-    "scanner_service.py", "report_server.py", "report_front.py", "report_crypto.js", "setup_report_key.py", "renew_report_certificate.py", "test_scanner_service.py", "regression_reclaims.py", "config.json", "README.md",
+    "scanner_service.py", "report_server.py", "report_front.py", "report_crypto.js", "report_zoom.js", "test_report_zoom.js", "setup_report_key.py", "renew_report_certificate.py", "test_scanner_service.py", "regression_reclaims.py", "config.json", "README.md",
     "market-pattern-scanner.service", "market-pattern-scanner.timer", "market-pattern-viewer.service",
     "market-pattern-http.service", "market-report-certificate.service", "market-report-certificate.timer",
     "market-pattern-front.service",
@@ -69,6 +69,7 @@ print('RELEASE_VERIFIED',root.name)
 """
     ssh(shlex.join(["python3", "-c", verify, destination]), json.dumps(manifest).encode())
     ssh("cd " + shlex.quote(destination) + " && python3 -m unittest -v test_scanner_service")
+    ssh("cd " + shlex.quote(destination) + " && node test_report_zoom.js")
     if not args.activate:
         print("已上传并通过远端检查；请先用此版本在 qqbot 完成真实行情回测，再加 --activate 激活。")
         return

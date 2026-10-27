@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left, bisect_right
+from collections import Counter
 import csv
 import datetime as dt
 import ssl
@@ -202,17 +204,16 @@ def resolve_blue_inside_wash_conflicts(matches: list[SegmentArcMatch]) -> list[S
 
 
 def remove_yellow_covering_wash(matches: list[SegmentArcMatch]) -> list[SegmentArcMatch]:
-    """Drop candidates whose rally area already contains another candidate's wash area."""
+    """按时间索引查询黄区是否覆盖其他候选白区起点，保持原筛选语义与顺序。"""
+    starts = sorted(match.wash_start.open_time for match in matches)
+    identities = Counter(id(match) for match in matches)
     kept: list[SegmentArcMatch] = []
     for match in matches:
-        covers_wash = False
-        for other in matches:
-            if other is match:
-                continue
-            if match.yellow_start.open_time <= other.wash_start.open_time <= match.yellow_end.open_time:
-                covers_wash = True
-                break
-        if not covers_wash:
+        left, right = match.yellow_start.open_time, match.yellow_end.open_time
+        covered = bisect_right(starts, right) - bisect_left(starts, left)
+        # 同一对象重复出现时，旧逻辑会跳过所有自身引用，而非只跳过一条。
+        own = identities[id(match)] if left <= match.wash_start.open_time <= right else 0
+        if covered <= own:
             kept.append(match)
     return kept
 

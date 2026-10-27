@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left
 import contextlib
 import csv
 import datetime as dt
@@ -21,6 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from decimal import Decimal
+from functools import lru_cache
 
 
 BAR_MS = 4 * 60 * 60 * 1000
@@ -322,6 +324,15 @@ def export_report(store: Store, root: Path, run: Path, summary: dict, infos: lis
         import draw_four_h_segment_arc_matches_svg as chart
         import draw_market_current_logic_from_csv as report
         import screen_aria_4h_pattern as live
+    start_ms = int(dt.datetime.fromisoformat(summary["start_bj"]).timestamp() * 1000)
+    end_ms = int(dt.datetime.fromisoformat(summary["end_bj_exclusive"]).timestamp() * 1000)
+
+    @lru_cache(maxsize=8)
+    def symbol_candles(symbol):
+        # 同一币的全部候选复用已解析 K 线；缓存容量仅控制内存，不参与筛选。
+        raw = store.read(symbol, start_ms, end_ms)
+        values = [live.Candle(int(c[0]), *(Decimal(v) for v in c[1:])) for c in raw]
+        return values, [c.open_time for c in values], {c.open_time: c for c in values}
     charts = run / "charts"
     charts.mkdir(exist_ok=True)
     group_pages = run / "groups"
@@ -337,12 +348,12 @@ def export_report(store: Store, root: Path, run: Path, summary: dict, infos: lis
             destination = charts / filename
             if not destination.exists():
                 first_ms = max(report.parse_bj_ms(variant["yellow_start_bj"]) - 8 * BAR_MS,
-                               int(dt.datetime.fromisoformat(summary["start_bj"]).timestamp() * 1000))
+                               start_ms)
                 last_ms = min(report.parse_bj_ms(variant["wash_end_bj"]) + 13 * BAR_MS,
-                              int(dt.datetime.fromisoformat(summary["end_bj_exclusive"]).timestamp() * 1000))
-                raw_candles = store.read(variant["symbol"], first_ms, last_ms)
-                candles = [live.Candle(int(c[0]), *(Decimal(v) for v in c[1:])) for c in raw_candles]
-                match = report.row_to_match(variant, {c.open_time: c for c in candles})
+                              end_ms)
+                values, times, by_time = symbol_candles(variant["symbol"])
+                candles = values[bisect_left(times, first_ms):bisect_left(times, last_ms)]
+                match = report.row_to_match(variant, by_time)
                 atomic_text(destination, chart.render(variant["symbol"], candles, match))
             chart_count += 1
             first_chart = first_chart or filename

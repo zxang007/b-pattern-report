@@ -8,6 +8,7 @@ import ssl
 import argparse
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import lru_cache
 from pathlib import Path
 
 import market_archive_pattern_scan as archive
@@ -118,6 +119,31 @@ def select_match(
     )
 
 
+@lru_cache(maxsize=128)
+def candle_frame(candles: tuple[base.Candle, ...], left, chart_w, price_top, price_h, vol_top, vol_h):
+    """复用完全相同 K 线窗口的底图，区域和箭头仍按各自候选绘制。"""
+    low = min(c.low for c in candles)
+    high = max(c.high for c in candles)
+    padding = (high - low) * Decimal("0.08")
+    low -= padding
+    high += padding
+    max_vol = max((c.quote_volume for c in candles), default=Decimal("1"))
+    candle_w = max(4.0, min(14.0, chart_w / max(1, len(candles)) * 0.62))
+    parts = []
+    for idx, candle in enumerate(candles):
+        x = x_for(idx, len(candles), left, chart_w)
+        color = "#10b981" if candle.close >= candle.open else "#ef4444"
+        y_high = y_for(candle.high, low, high, price_top, price_h)
+        y_low = y_for(candle.low, low, high, price_top, price_h)
+        y_open = y_for(candle.open, low, high, price_top, price_h)
+        y_close = y_for(candle.close, low, high, price_top, price_h)
+        parts.append(f'<line x1="{x:.2f}" x2="{x:.2f}" y1="{y_high:.2f}" y2="{y_low:.2f}" stroke="{color}" stroke-width="1.5"/>')
+        parts.append(f'<rect x="{x - candle_w / 2:.2f}" y="{min(y_open, y_close):.2f}" width="{candle_w:.2f}" height="{max(1.0, abs(y_close - y_open)):.2f}" fill="{color}"/>')
+        vol_height = float(candle.quote_volume / max_vol) * vol_h if max_vol > 0 else 0
+        parts.append(f'<rect x="{x - candle_w / 2:.2f}" y="{vol_top + vol_h - vol_height:.2f}" width="{candle_w:.2f}" height="{vol_height:.2f}" fill="{color}" opacity="0.72"/>')
+    return low, high, candle_w, tuple(parts)
+
+
 def render(symbol: str, candles: list[base.Candle], match: scan.SegmentArcMatch) -> str:
     width = 1600
     height = 900
@@ -129,12 +155,7 @@ def render(symbol: str, candles: list[base.Candle], match: scan.SegmentArcMatch)
     vol_h = 115
     chart_w = width - left - right
 
-    low = min(c.low for c in candles)
-    high = max(c.high for c in candles)
-    padding = (high - low) * Decimal("0.08")
-    low -= padding
-    high += padding
-    max_vol = max((c.quote_volume for c in candles), default=Decimal("1"))
+    low, high, candle_w, candle_parts = candle_frame(tuple(candles), left, chart_w, price_top, price_h, vol_top, vol_h)
 
     yellow_start_i = candle_index(candles, match.yellow_start)
     yellow_peak_i = candle_index(candles, match.yellow_peak)
@@ -174,18 +195,7 @@ def render(symbol: str, candles: list[base.Candle], match: scan.SegmentArcMatch)
         y = price_top + price_h * tick / 5
         parts.append(f'<line x1="{left}" x2="{left + chart_w}" y1="{y:.2f}" y2="{y:.2f}" stroke="#263244"/>')
 
-    candle_w = max(4.0, min(14.0, chart_w / max(1, len(candles)) * 0.62))
-    for idx, candle in enumerate(candles):
-        x = x_for(idx, len(candles), left, chart_w)
-        color = "#10b981" if candle.close >= candle.open else "#ef4444"
-        y_high = y_for(candle.high, low, high, price_top, price_h)
-        y_low = y_for(candle.low, low, high, price_top, price_h)
-        y_open = y_for(candle.open, low, high, price_top, price_h)
-        y_close = y_for(candle.close, low, high, price_top, price_h)
-        parts.append(f'<line x1="{x:.2f}" x2="{x:.2f}" y1="{y_high:.2f}" y2="{y_low:.2f}" stroke="{color}" stroke-width="1.5"/>')
-        parts.append(f'<rect x="{x - candle_w / 2:.2f}" y="{min(y_open, y_close):.2f}" width="{candle_w:.2f}" height="{max(1.0, abs(y_close - y_open)):.2f}" fill="{color}"/>')
-        vol_height = float(candle.quote_volume / max_vol) * vol_h if max_vol > 0 else 0
-        parts.append(f'<rect x="{x - candle_w / 2:.2f}" y="{vol_top + vol_h - vol_height:.2f}" width="{candle_w:.2f}" height="{vol_height:.2f}" fill="{color}" opacity="0.72"/>')
+    parts.extend(candle_parts)
 
     yx1 = x_for(yellow_start_i, len(candles), left, chart_w) - candle_w * 1.0
     yx2 = x_for(yellow_end_i, len(candles), left, chart_w) + candle_w * 1.0

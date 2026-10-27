@@ -12,6 +12,7 @@ import secrets
 import ssl
 import time
 from decimal import Decimal
+from functools import lru_cache
 from pathlib import Path
 
 import draw_four_h_segment_arc_matches_svg as chart
@@ -42,6 +43,7 @@ def ms_at(day: dt.date) -> int:
     return int(dt.datetime.combine(day, dt.time.min, tzinfo=dt.timezone.utc).timestamp() * 1000)
 
 
+@lru_cache(maxsize=4096)
 def parse_bj_ms(value: str) -> int:
     parsed = dt.datetime.strptime(value, "%Y-%m-%d %H:%M").replace(tzinfo=BJ)
     return int(parsed.astimezone(dt.timezone.utc).timestamp() * 1000)

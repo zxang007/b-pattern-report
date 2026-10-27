@@ -1,0 +1,20 @@
+[Unit]
+Description=HTTP and TLS ingress for encrypted market reports
+After=market-pattern-viewer.service market-pattern-http.service
+Wants=market-pattern-viewer.service market-pattern-http.service
+
+[Service]
+User=ubuntu
+Group=ubuntu
+ExecStart=/usr/bin/python3 /home/ubuntu/market-pattern-scanner/web-current/report_front.py
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+MemoryMax=64M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

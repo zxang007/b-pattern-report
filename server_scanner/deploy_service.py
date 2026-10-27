@@ -18,8 +18,10 @@ CORE_FILES = (
     "draw_four_h_segment_arc_matches_svg.py", "draw_market_current_logic_from_csv.py",
 )
 SERVICE_FILES = (
-    "scanner_service.py", "report_server.py", "report_crypto.js", "setup_report_key.py", "test_scanner_service.py", "config.json", "README.md",
+    "scanner_service.py", "report_server.py", "report_front.py", "report_crypto.js", "setup_report_key.py", "renew_report_certificate.py", "test_scanner_service.py", "config.json", "README.md",
     "market-pattern-scanner.service", "market-pattern-scanner.timer", "market-pattern-viewer.service",
+    "market-pattern-http.service", "market-report-certificate.service", "market-report-certificate.timer",
+    "market-pattern-front.service",
 )
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "qqbot"]
 
@@ -79,7 +81,7 @@ if state in ('active','activating','reloading'):
 config=root/'config.json'
 if not config.exists():
     shutil.copyfile(release/'config.json',config);config.chmod(0o600)
-for name in ['market-pattern-scanner.service','market-pattern-scanner.timer','market-pattern-viewer.service']:
+for name in ['market-pattern-scanner.service','market-pattern-scanner.timer','market-pattern-viewer.service','market-pattern-http.service','market-report-certificate.service','market-report-certificate.timer','market-pattern-front.service']:
     subprocess.run(['sudo','-n','install','-m','644',str(release/name),'/etc/systemd/system/'+name],check=True)
 subprocess.run(['sudo','-n','systemd-analyze','verify','/etc/systemd/system/market-pattern-scanner.service','/etc/systemd/system/market-pattern-scanner.timer','/etc/systemd/system/market-pattern-viewer.service'],check=True)
 current=root/'current'
@@ -88,8 +90,8 @@ if current.is_symlink():
 pending=root/'current.pending';pending.unlink(missing_ok=True);pending.symlink_to(release);pending.replace(current)
 web=root/'web-current.pending';web.unlink(missing_ok=True);web.symlink_to(release);web.replace(root/'web-current')
 subprocess.run(['sudo','-n','systemctl','daemon-reload'],check=True)
-subprocess.run(['sudo','-n','systemctl','enable','--now','market-pattern-scanner.timer','market-pattern-viewer.service'],check=True)
-subprocess.run(['sudo','-n','systemctl','restart','market-pattern-viewer.service'],check=True)
+subprocess.run(['sudo','-n','systemctl','enable','--now','market-pattern-scanner.timer','market-pattern-viewer.service','market-pattern-http.service','market-report-certificate.timer','market-pattern-front.service'],check=True)
+subprocess.run(['sudo','-n','systemctl','restart','market-pattern-viewer.service','market-pattern-http.service','market-pattern-front.service'],check=True)
 print('ACTIVATED',release.name)
 """
     ssh(shlex.join(["python3", "-c", activate, destination]))

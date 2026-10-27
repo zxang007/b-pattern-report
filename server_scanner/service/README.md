@@ -41,16 +41,24 @@ ssh qqbot 'cat /home/ubuntu/market-pattern-scanner/state/status.json'
 ssh qqbot 'journalctl -u market-pattern-scanner.service -n 30 --no-pager'
 ```
 
-报告服务使用服务器 HTTP 80 端口，地址为 `http://129.226.223.91/`，输入报告密码解密查看。
+报告地址为 `https://129.226.223.91:80/`，原 `http://129.226.223.91/` 自动跳转。
+云安全组当前未放行 443，入口在已开放的 80 端口区分普通 HTTP 与标准 TLS，分别转给本机 18765 与 443。
+使用可信 IP 证书，不跳过证书验证。证书每天检查两次并自动续期。
 `/history` 可查看历史回测和扫描，`/status.json` 显示最新任务状态。
 公开传输的报表、SVG、CSV、摘要和历史记录均为 AES-256-GCM 密文，浏览器用 PBKDF2-SHA256（210000 轮）派生密钥解锁。
 派生密钥保存在 systemd 加密凭据中，由系统仅在报告进程运行时解锁。源码、GitHub 和报表不包含密码或解锁密钥。
-不提供目录列表、数据库、输入缓存或配置文件。浏览器只在内存保留派生密钥，不写入本地存储。
+不提供目录列表、数据库、输入缓存或配置文件。
+首次成功解锁后，当前浏览器使用不可导出的 Web Crypto AES-GCM 密钥加密报告解锁材料，并存入 IndexedDB。
+后续打开自动解锁，不存储明文密码或明文派生密钥。清除网站数据、使用其他浏览器/设备或点击“忘记本设备”后，需要重新输入密码。
+密码派生和解密在后台 Worker 执行；HTTPS 下优先原生 Web Crypto，避免手机卡住。网络和计算都有超时提示。
 服务与 QQ 机器人独立，网页不能启动扫描或执行服务器命令。
 
 初次设置报告密钥用 `ssh -t qqbot 'python3 <新版本绝对路径>/setup_report_key.py'`，在终端无回显输入密码。
 该工具将派生密钥交给 `systemd-creds` 加密保存到 `/etc/credstore.encrypted/market-report.key`。
 密码不通过命令参数、环境文件、源码或部署包传递。报告服务通过 `LoadCredentialEncrypted` 在运行时读取密钥。
+证书私钥及 ACME 账户数据仅在 `/run` 内存文件系统中解锁，持久副本为系统加密凭据。
+系统凭据由主机受控的 root 密钥解锁，具有该主机 root 权限的管理员仍可解锁；这不代表磁盘整体加密。
+首次部署证书使用专用 `acme-venv` 中的 Certbot 5.4.0；`renew_report_certificate.py` 可重复运行，不重复申请尚未到期的证书。
 
 ## 指定历史回测
 

@@ -1,0 +1,19 @@
+[Unit]
+Description=HTTPS redirect and ACME challenge for market reports
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+ExecStart=/usr/bin/python3 /home/ubuntu/market-pattern-scanner/web-current/report_server.py --root /home/ubuntu/market-pattern-scanner/state --port 18765 --bind 127.0.0.1 --redirect-https
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Check market report certificate twice a day
+
+[Timer]
+OnCalendar=*-*-* 02,14:15:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

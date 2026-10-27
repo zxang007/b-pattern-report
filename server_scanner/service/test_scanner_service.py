@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import base64
 import json
+import gzip
 from pathlib import Path
 import tempfile
 import unittest
@@ -121,6 +122,15 @@ class ScannerTests(unittest.TestCase):
             AESGCM(b"x" * 32).decrypt(nonce, ciphertext, None)
         with self.assertRaises(InvalidTag):
             AESGCM(key).decrypt(nonce, ciphertext[:-1] + bytes([ciphertext[-1] ^ 1]), None)
+
+    def test_compression_happens_before_encryption(self):
+        key = b'z' * 32
+        credential = {"key": base64.b64encode(key).decode(), "salt": base64.b64encode(b'sample-salt-12345').decode()}
+        content = b'<tr><td>sample chart</td></tr>' * 2000
+        packet = json.loads(report_server.encrypted_packet(content, 'text/html', credential, compress=True))
+        decrypted = AESGCM(key).decrypt(base64.b64decode(packet['nonce']), base64.b64decode(packet['ciphertext']), None)
+        self.assertEqual(gzip.decompress(decrypted), content)
+        self.assertLess(len(decrypted), len(content) // 10)
 
 
 if __name__ == "__main__":

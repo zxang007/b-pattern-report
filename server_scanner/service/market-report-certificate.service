@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew encrypted IP certificate for market reports
+After=network-online.target market-pattern-http.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/ubuntu/market-pattern-scanner/web-current/renew_report_certificate.py
+UMask=0077
+TimeoutStartSec=5min

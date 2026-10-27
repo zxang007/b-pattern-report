@@ -47,6 +47,7 @@ def nearest(rows, case):
 def main():
     parser = argparse.ArgumentParser(description='只在 qqbot 对保存的人工样本执行新旧规则对照，不在识别器中导入样本答案。')
     parser.add_argument('--examples', type=Path, required=True)
+    parser.add_argument('--new-examples', type=Path, default=Path(__file__).with_name('new_examples.csv'))
     parser.add_argument('--old-release', type=Path, required=True)
     parser.add_argument('--new-release', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -55,7 +56,8 @@ def main():
     scanner.require_server()
     args.output.mkdir(parents=True, exist_ok=True)
     cases = list(csv.DictReader(args.examples.open()))
-    cases.append({'symbol': 'TUTUSDT', 'scan_start_date': '2026-07-01', 'scan_end_date': '2026-08-31'})
+    if args.new_examples.is_file():
+        cases.extend(csv.DictReader(args.new_examples.open()))
     cache = scanner.Store(args.output / 'cache.sqlite3')
     source = sqlite3.connect(f'file:{args.source_state / "scanner.sqlite3"}?mode=ro', uri=True)
     for case in cases:

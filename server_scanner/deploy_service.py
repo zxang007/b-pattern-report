@@ -17,6 +17,7 @@ CORE_FILES = (
     "market_archive_pattern_scan.py", "screen_aria_4h_pattern.py",
     "draw_four_h_segment_arc_matches_svg.py", "draw_market_current_logic_from_csv.py",
     "verified_examples.csv",
+    "new_examples.csv",
 )
 SERVICE_FILES = (
     "scanner_service.py", "report_server.py", "report_front.py", "report_crypto.js", "setup_report_key.py", "renew_report_certificate.py", "test_scanner_service.py", "regression_reclaims.py", "config.json", "README.md",

@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-multiplier-symbols", action="store_true", help="包含 1000/1000000 等面值倍数合约，默认自动市场扫描时排除。")
     parser.add_argument("--merge-cluster-gap-bars", type=int, default=0, help="同币候选默认只合并相同蓝低点和洗盘终点；大于0时再合并重叠或相邻结构。")
     parser.add_argument("--sort", choices=("time", "score", "compact", "quality"), default="quality")
-    parser.add_argument("--min-blue-drop-pct", type=Decimal, default=Decimal("6.0"), help="蓝色下杀低点相对黄色 hold 收盘价的最小跌幅，默认 6%。")
+    parser.add_argument("--min-blue-drop-pct", type=Decimal, default=Decimal("6.0"), help="蓝色下杀低点相对黄色 hold 收盘价的最小跌幅，默认 6%%。")
     parser.add_argument("--max-market-yellow-bars", type=int, default=48, help="市场扫描里黄色拉升区总跨度上限，避免把长周期横盘/慢涨当成拉升，默认 48。")
     parser.add_argument("--max-market-blue-bars", type=int, default=24, help="市场扫描里蓝色下杀区域总跨度上限，避免把长周期阴跌当成下杀，默认 24。")
     parser.add_argument("--max-blue-below-close-count", type=int, default=24, help="蓝区收盘低于 hold 的K线数量上限，避免把长时间阴跌当成下杀区，默认 24。")

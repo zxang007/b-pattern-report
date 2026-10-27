@@ -1,0 +1,8 @@
+{
+  "state_dir": "/home/ubuntu/market-pattern-scanner/state",
+  "code_source": "zxang007/b-pattern-report@2e4ecacdc3277b0562fd859d7eea7336059f3a7b",
+  "close_delay_seconds": 90,
+  "timeout_seconds": 20,
+  "http_retries": 3,
+  "symbol_timeout_seconds": 240
+}

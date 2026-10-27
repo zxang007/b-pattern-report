@@ -1,0 +1,11 @@
+[Unit]
+Description=Scan after each four-hour candle closes
+
+[Timer]
+OnCalendar=*-*-* 00,04,08,12,16,20:02:00 UTC
+Persistent=true
+AccuracySec=10s
+Unit=market-pattern-scanner.service
+
+[Install]
+WantedBy=timers.target

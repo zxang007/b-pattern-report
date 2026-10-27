@@ -110,6 +110,37 @@ class ScannerTests(unittest.TestCase):
         for path in ("/scanner.sqlite3", "/config.json", "/latest/../scanner.sqlite3", "/latest/%2e%2e/config.json", "/latest/by_symbol/TUTUSDT.input.json", "/latest/charts/../summary.json"):
             self.assertIsNone(report_server.report_path(root, path), path)
 
+    def test_latest_keeps_complete_scan_while_next_scan_runs(self):
+        root = Path(self.temp.name)
+        runs = root / "runs"
+        previous, complete, running, backtest = [runs / (kind + "-" + key * 20) for kind, key in
+                                               (("live", "a"), ("live", "b"), ("live", "c"), ("backtest", "d"))]
+        for folder, status, end in ((previous, "complete", "2026-10-27T04:00:00+08:00"),
+                                    (complete, "complete", "2026-10-27T08:00:00+08:00"),
+                                    (running, "running", "2026-10-27T12:00:00+08:00"),
+                                    (backtest, "complete", "2026-10-28T00:00:00+08:00")):
+            folder.mkdir(parents=True)
+            (folder / "index.html").write_text("<h1>report</h1>")
+            scanner.atomic_json(folder / "summary.json", {"status": status, "end_bj_exclusive": end})
+        (root / "latest").symlink_to(running)
+        self.assertEqual(report_server.report_path(root, "/latest/index.html"), complete / "index.html")
+        self.assertEqual(report_server.report_path(root, "/latest/matches.csv"), complete / "matches.csv")
+        self.assertEqual(report_server.report_path(root, "/runs/" + running.name + "/index.html"), running / "index.html")
+        scanner.atomic_json(running / "summary.json", {"status": "complete", "end_bj_exclusive": "2026-10-27T12:00:00+08:00"})
+        self.assertEqual(report_server.report_path(root, "/latest/index.html"), running / "index.html")
+
+    def test_latest_ignores_failed_or_damaged_reports(self):
+        root = Path(self.temp.name)
+        partial = root / "runs" / ("live-" + "a" * 20)
+        broken = root / "runs" / ("live-" + "b" * 20)
+        for folder in (partial, broken):
+            folder.mkdir(parents=True)
+            (folder / "index.html").write_text("<h1>report</h1>")
+        scanner.atomic_json(partial / "summary.json", {"status": "partial"})
+        (broken / "summary.json").write_text("{")
+        (root / "latest").symlink_to(partial)
+        self.assertEqual(report_server.report_path(root, "/latest/index.html"), partial / "index.html")
+
     def test_report_encryption_rejects_wrong_key_and_tampering(self):
         key = bytes(range(32))
         credential = {"key": base64.b64encode(key).decode(), "salt": base64.b64encode(b"sample-salt-12345").decode()}

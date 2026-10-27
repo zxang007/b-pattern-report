@@ -32,11 +32,18 @@ def evidence(row, candles):
 
 def nearest(rows, case):
     fields = [('yellow_start_bj', 'expected_yellow_start_bj'), ('yellow_end_bj', 'expected_yellow_end_bj'),
-              ('blue_start_bj', 'expected_blue_start_bj'), ('reclaim_bj', 'expected_blue_end_bj'),
+              ('blue_start_bj', 'expected_blue_start_bj'),
               ('wash_start_bj', 'expected_wash_start_bj'), ('wash_end_bj', 'expected_wash_end_bj')]
+    # 旧样本把红箭头记作蓝区结束；新标记单独区分蓝区末根与红箭头。
+    explicit_arrow = bool(case.get('expected_reclaim_bj'))
+    fields.append(('reclaim_bj', 'expected_reclaim_bj' if explicit_arrow else 'expected_blue_end_bj'))
     def gaps(row):
-        return [abs(timestamp(row[field]) - timestamp(case[target])) / 3600000
-                for field, target in fields if case.get(target)]
+        values = [abs(timestamp(row[field]) - timestamp(case[target])) / 3600000
+                  for field, target in fields if case.get(target)]
+        if explicit_arrow and case.get('expected_blue_end_bj'):
+            blue_end = timestamp(row['reclaim_bj']) - scanner.BAR_MS
+            values.append(abs(blue_end - timestamp(case['expected_blue_end_bj'])) / 3600000)
+        return values
     if not rows or not case.get('expected_yellow_start_bj'):
         return None
     row = min(rows, key=lambda row: (max(gaps(row)), sum(gaps(row))))

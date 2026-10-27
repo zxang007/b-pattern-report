@@ -1,2 +1,2 @@
-symbol,scan_start_date,scan_end_date,notes
-TUTUSDT,2026-07-01,2026-08-31,用户指定的新增例子；黄蓝白边界待单独核对
+symbol,scan_start_date,scan_end_date,expected_yellow_start_bj,expected_yellow_end_bj,expected_blue_start_bj,expected_blue_end_bj,expected_reclaim_bj,expected_wash_start_bj,expected_wash_end_bj,max_segment_gap_hours,notes
+TUTUSDT,2026-07-01,2026-08-31,2026-07-06 20:00,2026-07-07 16:00,2026-07-07 20:00,2026-07-09 16:00,2026-07-09 20:00,2026-07-09 20:00,,0,用户于2026-10-27标记黄区和蓝区边界及红箭头与白区起点；白区终点尚未指定

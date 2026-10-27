@@ -206,7 +206,8 @@ def render(symbol: str, candles: list[base.Candle], match: scan.SegmentArcMatch)
     )
 
     down_start_i = blue_start_i
-    down_end_i = max(down_start_i, reclaim_i)
+    # 蓝区止于红箭头前的最后一根，红箭头根属于白区起点。
+    down_end_i = reclaim_i - 1
     down_span = candles[down_start_i : down_end_i + 1]
     if down_span:
         dx1 = x_for(down_start_i, len(candles), left, chart_w) - candle_w / 2
@@ -214,7 +215,7 @@ def render(symbol: str, candles: list[base.Candle], match: scan.SegmentArcMatch)
         dy1 = y_for(max(c.high for c in down_span), low, high, price_top, price_h) - 14
         dy2 = y_for(min(c.low for c in down_span), low, high, price_top, price_h) + 14
         parts.append(
-            f'<rect x="{dx1:.2f}" y="{min(dy1, dy2):.2f}" width="{max(1, dx2 - dx1):.2f}" height="{max(1, abs(dy2 - dy1)):.2f}" fill="#0ea5e9" fill-opacity="0.05" stroke="#0ea5e9" stroke-width="4" rx="2"/>'
+            f'<rect id="blue-region" data-start-time="{candles[down_start_i].open_time}" data-end-time="{candles[down_end_i].open_time}" x="{dx1:.2f}" y="{min(dy1, dy2):.2f}" width="{max(1, dx2 - dx1):.2f}" height="{max(1, abs(dy2 - dy1)):.2f}" fill="#0ea5e9" fill-opacity="0.05" stroke="#0ea5e9" stroke-width="4" rx="2"/>'
         )
 
     bx = x_for(reclaim_i, len(candles), left, chart_w)

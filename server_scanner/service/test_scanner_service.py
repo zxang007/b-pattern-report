@@ -215,6 +215,9 @@ class ReclaimTests(unittest.TestCase):
         arrow = rendered.find('.//*[@id="reclaim-breakout"]')
         self.assertEqual(Decimal(arrow.attrib['data-yellow-highest-close']), Decimal('10'))
         self.assertEqual(Decimal(arrow.attrib['data-quote-volume']), Decimal('900000'))
+        blue = rendered.find('.//*[@id="blue-region"]')
+        self.assertEqual(int(blue.attrib['data-end-time']), matches[0].reclaim.open_time - scanner.BAR_MS)
+        self.assertLess(int(blue.attrib['data-end-time']), int(arrow.attrib['data-reclaim-time']))
 
     def test_dedupe_keeps_alternative_yellow_boundaries(self):
         from dataclasses import replace
@@ -224,6 +227,15 @@ class ReclaimTests(unittest.TestCase):
         first = replace(match, yellow_start=candles[0])
         later = replace(match, yellow_start=candles[1])
         self.assertEqual(len(market.dedupe([first, later, first], 999)), 2)
+
+    def test_wash_departure_does_not_require_a_turnover_threshold(self):
+        closes = [8, 9, 10, 8, 9, 11, '11.2', '11.1', 12]
+        amounts = [100, 100, 100, 100, 100, 900000, 3000000, 50000, 100000]
+        candles = [self.candle(i, close, amounts[i]) for i, close in enumerate(closes)]
+        # 白区内有更大的成交额，脱离根自身也不足九十万，仍只检查收盘突破。
+        self.assertIn(8, segment.departure_indexes(candles, 5, Decimal('10')))
+        matches = segment.find_matches(candles, 'TESTUSDT', market.scan_args(scanner.core_defaults()))
+        self.assertTrue(any(match.reclaim == candles[5] and match.wash_end == candles[7] for match in matches))
 
 
 if __name__ == "__main__":

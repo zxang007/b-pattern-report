@@ -139,9 +139,7 @@ def departure_indexes(
         if candle.close < hold_line:
             return indexes
         current_peak_close = max(item.close for item in segment)
-        wash_max_volume = max(item.quote_volume for item in segment)
-        volume_departure = candle.quote_volume >= wash_max_volume and candle.close > current_peak_close
-        if volume_departure:
+        if candle.close > current_peak_close:
             indexes.append(index)
     return indexes
 
@@ -663,15 +661,15 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
             blue_average_volume = average_quote_volume(candles[blue_start_i:reclaim_i])
             breakout_volume_ratio = reclaim.quote_volume / blue_average_volume if blue_average_volume > 0 else Decimal("0")
 
-            # 白区保持黄区最高收盘价，放量且收盘创新高的下一根作为脱离点。
+            # 白区保持黄区最高收盘价，收盘突破白区最高收盘价的下一根作为脱离点。
+            # 九十万成交额门槛只约束红箭头，不对白区脱离附加成交额比较。
             wash_min_close = reclaim.close
             wash_peak = reclaim.close
-            wash_max_volume = reclaim.quote_volume
             for departure_i in range(reclaim_i + 1, n):
                 departure = candles[departure_i]
                 if departure.close < hold_line:
                     break
-                if departure.close > wash_peak and departure.quote_volume >= wash_max_volume:
+                if departure.close > wash_peak:
                     if month_holds_wash_peak_after_departure(candles, departure_i, wash_peak, args):
                         for yellow_start_i, yellow_low in yellow_starts:
                             matches.append(SegmentArcMatch(
@@ -694,7 +692,6 @@ def find_matches(candles: list[base.Candle], symbol: str, args: argparse.Namespa
                             ))
                 wash_min_close = min(wash_min_close, departure.close)
                 wash_peak = max(wash_peak, departure.close)
-                wash_max_volume = max(wash_max_volume, departure.quote_volume)
 
     matches = remove_yellow_covering_wash(matches)
     # 后续局部结构的出现不能抹掉此前已经满足条件的完整结构。

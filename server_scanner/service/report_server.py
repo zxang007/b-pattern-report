@@ -151,7 +151,7 @@ def report_path(root: Path, url: str) -> Path | None:
         return None
     # 只公开报表、候选数据和图形；数据库、输入缓存及目录列表不对外提供。
     allowed = len(relative) == 1 and relative[0] in (
-        "index.html", "matches.csv", "summary.json", "events.json", "failed_symbols.json",
+        "index.html", "matches.csv", "excluded.csv", "summary.json", "events.json", "failed_symbols.json",
     )
     allowed = allowed or (len(relative) == 2 and relative[0] == "charts" and
                           re.fullmatch(r"[0-9a-f]{32}\.svg", relative[1]) is not None)

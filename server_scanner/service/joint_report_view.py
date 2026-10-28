@@ -62,11 +62,17 @@ def regroup_report(run):
     positions = [original.index(marker) for marker in markers if marker in original]
     assert positions, '未找到报告主列表，未修改原首页'
     prefix = original[:min(positions)]
+    validity_note = ''
+    if summary.get('candidate_filter') == 'last_retest_close_never_broken':
+        validity_note = (f'<p>末次回踩失效筛选：历史形态命中 {summary["historical_matched_symbols"]} 个币、'
+            f'{summary["historical_matches"]} 条组合；其中 {summary["excluded_matches"]} 条组合后来收盘跌破最后回踩低点，已排除。'
+            f'当前候选保留 {summary["matched_symbols"]} 个币。价格核对截至 {summary["price_checked_through_bj"]}，不含之后行情；五个旧例只核对历史形态，不要求通过此筛选。</p>')
     intro = f'<h1>4小时＋15分钟联合筛选</h1><p>本轮覆盖 {summary["total_symbols"]} 个币安 USDT 永续交易对，4小时候选 {summary["four_h_candidate_symbols"]} 个币；两级同时命中 <strong>{summary["matched_symbols"]}</strong> 个币、<strong>{len(signals)}</strong> 个15分钟信号，关联 {len(events["groups"])} 组4小时依据，完整保留 {summary["matches"]} 条15分钟组合。</p>'
     prefix, replaced = re.subn(r'<h1>4小时＋15分钟联合筛选</h1><p>本轮覆盖.*?</p>', lambda _: intro, prefix, count=1, flags=re.S)
     assert replaced == 1
     prefix = prefix.replace('按最近可见确认时间由新到旧排列；同一4小时结构的多次15分钟回踩聚合展示。',
         '按15分钟确认时间由新到旧排列；相同放量启动和回踩确认只显示一行，全部4小时依据列入明细。')
+    prefix += validity_note
     table = '<table data-signal-list="1"><tr><th>币名（点按复制USDT）</th><th>放量启动</th><th>15分钟确认</th><th>末次主要回踩</th><th>4小时依据</th><th>图形</th></tr>'
     for item in signals:
         symbol = html.escape(item['symbol'])

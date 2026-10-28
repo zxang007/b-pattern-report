@@ -27,7 +27,10 @@ SERVICE_FILES = (
     "market-pattern-front.service",
     "platform_door_15m.py", "prepare_15m_market.py", "plot_platform_15m.py", "run_platform_market.py",
     "regression_platform_15m.py", "platform_pipeline.py", "market-pattern-confirmation.service",
-    "joint_report_view.py",
+    "joint_report_view.py", "five_case_gate.py", "test_five_case_gate.py", "regression_blue_closes.py",
+    "manual_exclusions.py", "test_manual_exclusions.py", "report_exclusions.js", "test_report_exclusions.js",
+    "report_mobile.css", "report_mobile.js", "test_report_mobile.js", "scan_retention.py",
+    "retest_validity.py", "test_retest_validity.py", "regression_retest_peaks.py",
 )
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "qqbot"]
 
@@ -46,6 +49,9 @@ def main() -> None:
     root = Path(__file__).resolve().parent.parent
     core = root / "github_pages_pattern_task" if (root / "github_pages_pattern_task").is_dir() else root
     service = Path(__file__).resolve().parent / "service"
+    # 独立服务优先使用服务器同步的核心源码，避免旧日报代码覆盖新版规则。
+    if (service / "four_h_segment_arc_scan.py").is_file():
+        core = service
     files = {name: (core / name).read_bytes() for name in CORE_FILES}
     files.update({name: (service / name).read_bytes() for name in SERVICE_FILES})
     manifest = {"release": args.release, "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
@@ -72,7 +78,17 @@ for name,value in expected['files'].items():
 print('RELEASE_VERIFIED',root.name)
 """
     ssh(shlex.join(["python3", "-c", verify, destination]), json.dumps(manifest).encode())
-    ssh("cd " + shlex.quote(destination) + " && python3 -m unittest -v test_scanner_service")
+    fixtures = """
+from pathlib import Path
+import shutil,sys
+release=Path(sys.argv[1]); current=release.parent.parent/'current'
+source=current/'regression_inputs'; target=release/'regression_inputs'
+if not target.exists():
+    if not source.is_dir(): raise SystemExit('缺少服务器五例历史输入，停止部署；不要上传行情缓存到GitHub。')
+    shutil.copytree(source,target)
+"""
+    ssh(shlex.join(["python3", "-c", fixtures, destination]))
+    ssh("cd " + shlex.quote(destination) + " && python3 -m unittest discover -v")
     ssh("cd " + shlex.quote(destination) + " && node test_report_zoom.js")
     if not args.activate:
         print("已上传并通过远端检查；请先用此版本在 qqbot 完成真实行情回测，再加 --activate 激活。")
@@ -81,9 +97,10 @@ print('RELEASE_VERIFIED',root.name)
 from pathlib import Path
 import shutil,subprocess,sys
 root=Path('/home/ubuntu/market-pattern-scanner'); release=Path(sys.argv[1])
-state=subprocess.run(['systemctl','is-active','market-pattern-scanner.service'],capture_output=True,text=True).stdout.strip()
-if state in ('active','activating','reloading'):
-    raise SystemExit('扫描正在执行，请完成后再激活，避免混用版本。')
+for unit in ['market-pattern-scanner.service','market-pattern-confirmation.service']:
+    state=subprocess.run(['systemctl','is-active',unit],capture_output=True,text=True).stdout.strip()
+    if state in ('active','activating','reloading'):
+        raise SystemExit('扫描正在执行，请完成后再激活，避免混用版本。')
 (root/'state').mkdir(exist_ok=True)
 config=root/'config.json'
 if not config.exists():

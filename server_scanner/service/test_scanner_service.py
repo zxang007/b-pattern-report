@@ -251,6 +251,32 @@ class ReclaimTests(unittest.TestCase):
             kept = market.market_filter(found, args)
             self.assertTrue(any(m.reclaim.open_time == candles[reclaim_i].open_time and m.wash_end.open_time == candles[-2].open_time for m in kept))
 
+    def test_blue_closes_cannot_cross_or_equal_yellow_before_arrow(self):
+        for crossing, amount in ((10, 100), (11, 899999), (12, 100)):
+            closes = [8, 9, 10, 8, crossing, 7, 11, 12]
+            candles = [self.candle(i, close, 900000 if i == 6 else amount if i == 4 else 100)
+                       for i, close in enumerate(closes)]
+            matches = segment.find_matches(candles, 'TESTUSDT', market.scan_args(scanner.core_defaults()))
+            self.assertFalse(any(m.yellow_end == candles[2] and m.reclaim == candles[6] for m in matches))
+            for match in matches:
+                blue = [c for c in candles if match.blue_start.open_time <= c.open_time < match.reclaim.open_time]
+                self.assertTrue(all(c.close < match.yellow_highest_close for c in blue))
+
+    def test_yellow_ends_at_later_high_before_same_blue_and_arrow(self):
+        closes = [8, 9, 10, 9, 12, 8, 9, 13, 14]
+        candles = [self.candle(i, close, 900000 if i == 7 else 100) for i, close in enumerate(closes)]
+        matches = segment.find_matches(candles, 'TESTUSDT', market.scan_args(scanner.core_defaults()))
+        same_arrow = [m for m in matches if m.reclaim == candles[7]]
+        self.assertTrue(same_arrow)
+        self.assertTrue(all(m.yellow_end == candles[4] and m.yellow_highest_close == Decimal('12') for m in same_arrow))
+
+    def test_blue_wicks_may_exceed_yellow_close(self):
+        closes = [8, 9, 10, 8, 9, 11, 12]
+        candles = [self.candle(i, close, 900000 if i == 5 else 100,
+                               high=20 if i in (3, 4) else None) for i, close in enumerate(closes)]
+        matches = segment.find_matches(candles, 'TESTUSDT', market.scan_args(scanner.core_defaults()))
+        self.assertTrue(any(m.yellow_end == candles[2] and m.reclaim == candles[5] for m in matches))
+
     def test_chart_arrow_records_actual_price_and_turnover(self):
         import draw_four_h_segment_arc_matches_svg as chart
         import xml.etree.ElementTree as ET

@@ -7,6 +7,7 @@ import sys
 
 import scanner_service as scanner
 from prepare_15m_market import prepare
+from scan_retention import prune_scans
 
 
 def main():
@@ -23,6 +24,7 @@ def main():
     prepare(source)
     subprocess.run([sys.executable, str(Path(__file__).with_name('run_platform_market.py')), '--mode', 'live',
         '--regression', str(root / 'platform-validated-engine.json')], check=True)
+    print(json.dumps(prune_scans(root.parent), ensure_ascii=False), flush=True)
 
 
 if __name__ == '__main__':

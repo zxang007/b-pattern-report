@@ -32,6 +32,7 @@ RULES = [
     '第一次回踩影线回到平台价格范围，且收盘低于启动根收盘；整段影线不破起涨前平台支撑。',
     '两次主要回踩之间有收盘重新离开平台上沿；后续回踩回到第一次下杀影线触及的价格带。允许后一次略低于前一次，但不能破平台。',
     '每次回踩同时保留影线与收盘低点；中途回踩和后续回踩继续记录，不限制三节点，不用固定根数、形态时长或拟合百分比筛选。',
+    '15分钟最终确认根的收盘价必须严格高于对应整个蓝区的最高收盘价；相等不通过，蓝区不含红箭头收复根，影线最高价不作此比较。',
     '15分钟的最终确认不能早于对应4小时白区末根收盘；只使用本轮截止时间之前已经收盘的行情。',
 ]
 
@@ -55,6 +56,8 @@ def write_csv(path, rows):
 
 def read_groups(source):
     grouped = {}
+    blue_store=scanner.Store(source.parent.parent/'scanner.sqlite3')
+    blue_cache={}
     with (source / 'matches.csv').open() as handle:
         for row in csv.DictReader(handle):
             key = scanner.group_id(row)
@@ -64,13 +67,28 @@ def read_groups(source):
                 grouped[key] = {'group_id': key, 'symbol': row['symbol'], 'reclaim_ms': reclaim,
                     'available_ms': available, 'four_h_variants': 0}
             item = grouped[key]
+            begin,end=stamp(row['blue_start_bj']),stamp(row['reclaim_bj'])
+            cache_key=(row['symbol'],begin,end)
+            if cache_key not in blue_cache:
+                raw=blue_store.read(row['symbol'],begin,end)
+                assert [v[0] for v in raw]==list(range(begin,end,scanner.BAR_MS)), '蓝区行情不完整'
+                blue_cache[cache_key]=max(Decimal(v[4]) for v in raw)
+            pair=(available,blue_cache[cache_key])
+            variants=item.setdefault('blue_variants',{})
+            variants[pair]=variants.get(pair,0)+1
             item['four_h_variants'] += 1
             item['reclaim_ms'] = min(item['reclaim_ms'], reclaim)
             item['available_ms'] = min(item['available_ms'], available)
+    blue_store.db.close()
     symbols = {}
     for item in grouped.values():
         symbols.setdefault(item['symbol'], []).append(item)
     return symbols
+
+
+def eligible_blue_variants(group,confirm_close,confirmed_ms):
+    return [(available,blue,count) for (available,blue),count in group['blue_variants'].items()
+            if available<=confirmed_ms and confirm_close>blue]
 
 
 def evidence(symbol, search, door, group):
@@ -81,6 +99,7 @@ def evidence(symbol, search, door, group):
     available = c[final + 1].open_time + INTERVAL
     support, ceiling = c[door.support].low, search.close.value(door.platform, door.launch)
     return {'symbol': symbol, 'group_id': group['group_id'], 'four_h_available_bj': bj(group['available_ms']),
+        'confirm_close': str(c[final+1].close), 'blue_max_close': str(group['blue_max_close']),
         'platform_start_bj': bj(c[door.platform].open_time), 'platform_support': str(support),
         'platform_highest_close': str(ceiling), 'launch_bj': bj(c[door.launch].open_time),
         'launch_close': str(c[door.launch].close), 'launch_quote_usdt': str(c[door.launch].quote_volume),
@@ -176,7 +195,13 @@ def main():
                     final = max(door.episodes[-1])
                     if candles[final + 1].open_time + INTERVAL < group['available_ms']:
                         continue
-                    item = evidence(symbol, search, door, group)
+                    confirm_close=candles[final+1].close
+                    valid_blue=eligible_blue_variants(group,confirm_close,candles[final+1].open_time+INTERVAL)
+                    if not valid_blue: continue
+                    selected_blue=min(valid_blue,key=lambda v:(v[1],v[0]))
+                    eligible_group={**group,'available_ms':selected_blue[0],'blue_max_close':selected_blue[1],
+                        'four_h_variants':sum(v[2] for v in valid_blue)}
+                    item = evidence(symbol, search, door, eligible_group)
                     variants.append((item, door))
                 if not variants:
                     continue
@@ -194,8 +219,8 @@ def main():
                 source_url = f'/runs/{source.name}/groups/{gid}.html'
                 image_url = f'/runs/{scope}/charts/{chart}'
                 table = ''.join('<tr>' + ''.join(f'<td>{html.escape(str(value[key]))}</td>' for key in
-                    ['launch_bj', 'first_retest_bj', 'latest_retest_bj', 'confirmed_bj', 'platform_support', 'launch_quote_usdt', 'later_support_break_bj']) + '</tr>' for value, _ in variants)
-                detail = f'<h1>{symbol} · 4小时＋15分钟联合命中</h1><button type="button" data-copy-name="{symbol}">复制 {symbol}</button><p><a href="/runs/{scope}/index.html">返回全部结果</a> · <a href="{source_url}">对应4小时图及全部边界</a></p><p>本组保留 {len(variants)} 个平台与放量段组合。预览取最近形成的一组，完整节点与成交额见 CSV；已形成后再跌破平台的时间单独列出，没有用事后涨幅倒选。</p><a href="{image_url}"><img src="{image_url}" alt="{symbol} 15分钟平台及主要回踩"></a><h2>全部识别记录</h2><table><tr><th>放量启动</th><th>首次回踩</th><th>末次回踩</th><th>可见确认</th><th>平台支撑</th><th>启动成交额USDT</th><th>后来跌破平台</th></tr>{table}</table>'
+                    ['launch_bj', 'first_retest_bj', 'latest_retest_bj', 'confirmed_bj', 'platform_support', 'launch_quote_usdt', 'later_support_break_bj', 'confirm_close', 'blue_max_close']) + '</tr>' for value, _ in variants)
+                detail = f'<h1>{symbol} · 4小时＋15分钟联合命中</h1><button type="button" data-copy-name="{symbol}">复制 {symbol}</button><p><a href="/runs/{scope}/index.html">返回全部结果</a> · <a href="{source_url}">对应4小时图及全部边界</a></p><p>本组保留 {len(variants)} 个平台与放量段组合。预览取最近形成的一组，完整节点与成交额见 CSV；已形成后再跌破平台的时间单独列出，没有用事后涨幅倒选。</p><a href="{image_url}"><img src="{image_url}" alt="{symbol} 15分钟平台及主要回踩"></a><h2>全部识别记录</h2><table><tr><th>放量启动</th><th>首次回踩</th><th>末次回踩</th><th>可见确认</th><th>平台支撑</th><th>启动成交额USDT</th><th>后来跌破平台</th><th>15分钟确认收盘</th><th>蓝区最高收盘</th></tr>{table}</table>'
                 scanner.atomic_text(run / 'groups' / (gid + '.html'), page(symbol + ' 联合结构', detail))
                 cards.append({'symbol': symbol, 'group_id': gid, 'confirmed_bj': item['confirmed_bj'], 'variants': len(variants),
                     'launch_bj': item['launch_bj'], 'latest_retest_bj': item['latest_retest_bj']})

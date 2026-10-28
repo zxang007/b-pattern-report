@@ -407,6 +407,12 @@ def run_scan(options) -> int:
     except BlockingIOError:
         print("已有扫描进程，跳过重复启动。", flush=True)
         return 0
+    from five_case_gate import ensure_five_cases
+    try:
+        ensure_five_cases(Path(__file__).resolve().parent, root)
+    except BaseException:
+        lock.close()
+        raise
     api = PublicAPI(config.get("timeout_seconds", 20), config.get("http_retries", 3))
     current = int(api.get("/fapi/v1/time")["serverTime"])
     closed_end = ((current - config.get("close_delay_seconds", 90) * 1000) // BAR_MS) * BAR_MS

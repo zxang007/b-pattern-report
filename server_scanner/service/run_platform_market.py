@@ -34,7 +34,7 @@ RULES = [
     '两次主要回踩之间有收盘重新离开平台上沿；后续回踩回到第一次下杀影线触及的价格带。允许后一次略低于前一次，但不能破平台。',
     '每次回踩同时保留影线与收盘低点；中途回踩和后续回踩继续记录，不限制三节点，不用固定根数、形态时长或拟合百分比筛选。',
     '15分钟最终确认根的收盘价必须严格高于对应整个蓝区的最高收盘价；相等不通过，蓝区不含红箭头收复根，影线最高价不作此比较。',
-    '15分钟的最终确认不能早于对应4小时白区末根收盘；只使用本轮截止时间之前已经收盘的行情。',
+    '15分钟最终确认不能早于对应4小时白区末根收盘；形态识别使用四小时来源窗口，失效检查延伸至最新已收盘15分钟。',
     '当前候选另行检查末次主要回踩的影线最低价：之后任何15分钟收盘严格跌破即排除，后来收回也不恢复，相等保留。五例仅验证历史形态复现，不要求通过当前候选的失效筛选。',
 ]
 
@@ -149,7 +149,10 @@ def main():
     assert regression['all_five_exact'] and regression['all_four_rejected_excluded']
     assert regression['engine_sha256'] == engine_sha, '识别器变更后必须重新完成五例回归'
     manifest = json.loads((root / 'fifteen_m_market_manifest.json').read_text())
+    formation_end = manifest['end_ms_exclusive']
+    price_end = manifest.get('price_end_ms_exclusive', formation_end) if args.mode == 'live' else formation_end
     scope = args.mode + '-' + scanner.digest({'source': manifest['source_scope'], 'engine': engine_sha,
+        'price_end_ms_exclusive': price_end,
         'runner': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         'validity': hashlib.sha256((module / 'retest_validity.py').read_bytes()).hexdigest(),
         'plot': hashlib.sha256((module / 'plot_platform_15m.py').read_bytes()).hexdigest()})[:20]
@@ -162,13 +165,14 @@ def main():
         'four_h_candidate_symbols': manifest['candidate_symbols'], 'matched_symbols': 0, 'matches': 0, 'charts': 0,
         'validation_ok': False, 'closed_candles_only': True, 'engine_sha256': engine_sha,
         'candidate_filter': 'last_retest_close_never_broken' if args.mode == 'live' else 'historical_unfiltered',
-        'price_checked_through_bj': manifest['source_summary']['end_bj_exclusive'],
+        'price_checked_through_bj': scanner.dt.datetime.fromtimestamp(price_end / 1000, scanner.BJ).isoformat(),
         'regression_purpose': 'historical_shape_only'}
     scanner.atomic_json(run / 'summary.json', summary)
     scanner.atomic_json(root / 'platform_status.json', summary)
     while True:
         status = json.loads((root / 'fifteen_m_fetch_status.json').read_text())
         assert status['source_scope'] == manifest['source_scope']
+        assert status.get('price_end_ms_exclusive', formation_end) == manifest.get('price_end_ms_exclusive', formation_end)
         if status['status'] == 'complete':
             break
         if status['status'] == 'partial' or not args.wait_for_cache:
@@ -190,15 +194,18 @@ def main():
             continue
         try:
             first = max(info['fetch_start_ms'], (info['onboard'] // INTERVAL) * INTERVAL)
-            raw = store.read(symbol, first, manifest['end_ms_exclusive'])
-            assert [r[0] for r in raw] == list(range(first, manifest['end_ms_exclusive'], INTERVAL))
-            candles = [Candle(int(r[0]), *(Decimal(x) for x in r[1:])) for r in raw]
+            raw = store.read(symbol, first, price_end)
+            assert [r[0] for r in raw] == list(range(first, price_end, INTERVAL))
+            price_candles = [Candle(int(r[0]), *(Decimal(x) for x in r[1:])) for r in raw]
+            # 新行情只用于淘汰失效候选，不移动既有形态节点或提前加入下一轮候选。
+            candles = [bar for bar in price_candles if bar.open_time < formation_end]
             search = PlatformSearch(candles)
             doors = search.find(first, first)
+            price_search = PlatformSearch(price_candles) if price_end > formation_end else search
             validity = {}
             for door in doors:
                 if door.episodes[-1] not in validity:
-                    validity[door.episodes[-1]] = retest_validity(search, door)
+                    validity[door.episodes[-1]] = retest_validity(price_search, door)
             for group in symbol_groups:
                 variants = []
                 for door in doors:
@@ -292,7 +299,7 @@ def main():
     peak_table = '<details><summary>五例末次回踩至窗口高点核对：' + str(peak_proof['held_before_highest']) + '/5 未跌破</summary><p>各例使用已保存样本窗口，最高点仅用于事后核对。按收盘价检查，单纯影线下探不排除。ARIA 的影线下探不影响其收盘守住回踩低点。最高点所在K线内的先后顺序不作推断。</p><table><tr><th>币名</th><th>末次回踩</th><th>影线低点</th><th>窗口高点时间</th><th>最高价</th><th>高点前最低收盘</th><th>首次跌破时间</th><th>结论</th></tr>' + peak_rows + '</table></details>'
 
     rules_html = '<ol>' + ''.join('<li>' + html.escape(rule) + '</li>' for rule in RULES) + '</ol>'
-    body = f'<h1>4小时＋15分钟联合筛选</h1><p>本轮覆盖 {summary["total_symbols"]} 个币安 USDT 永续交易对，4小时候选 {manifest["candidate_symbols"]} 个币；两级同时命中 <strong>{summary["matched_symbols"]}</strong> 个币、{len(cards)} 组4小时结构，完整保留 {len(rows)} 条15分钟组合。</p><p>窗口：{summary["start_bj"]} 至 {summary["end_bj_exclusive"]}（不含截止时刻后的K线）。按最近可见确认时间由新到旧排列；同一4小时结构的多次15分钟回踩聚合展示。</p><p><a href="matches.csv">当前候选CSV</a> · <a href="excluded.csv">跌破排除CSV</a> · <a href="events.json">规则、来源与五例回归证据</a> · <a href="/runs/{source.name}/index.html">全部4小时候选</a></p><details><summary>本轮统一规则</summary>{rules_html}</details><details><summary>历史形态复测：五例5/5通过、旧错例4/4排除（不要求五例通过当前失效筛选）</summary><table>{regression_table}</table></details><table><tr><th>币名（点按复制USDT）</th><th>最近可见确认</th><th>末次主要回踩</th><th>保留组合</th><th>图形</th></tr>{listing}</table>'
+    body = f'<h1>4小时＋15分钟联合筛选</h1><p>本轮覆盖 {summary["total_symbols"]} 个币安 USDT 永续交易对，4小时候选 {manifest["candidate_symbols"]} 个币；两级同时命中 <strong>{summary["matched_symbols"]}</strong> 个币、{len(cards)} 组4小时结构，完整保留 {len(rows)} 条15分钟组合。</p><p>形态窗口：{summary["start_bj"]} 至 {summary["end_bj_exclusive"]}；收盘跌破检查更新至 {summary["price_checked_through_bj"]}（仅使用已收盘15分钟K线）。按最近可见确认时间由新到旧排列；同一4小时结构的多次15分钟回踩聚合展示。</p><p><a href="matches.csv">当前候选CSV</a> · <a href="excluded.csv">跌破排除CSV</a> · <a href="events.json">规则、来源与五例回归证据</a> · <a href="/runs/{source.name}/index.html">全部4小时候选</a></p><details><summary>本轮统一规则</summary>{rules_html}</details><details><summary>历史形态复测：五例5/5通过、旧错例4/4排除（不要求五例通过当前失效筛选）</summary><table>{regression_table}</table></details><table><tr><th>币名（点按复制USDT）</th><th>最近可见确认</th><th>末次主要回踩</th><th>保留组合</th><th>图形</th></tr>{listing}</table>'
     body = body.replace('<table><tr><th>币名（点按复制USDT）</th>', peak_table + '<table><tr><th>币名（点按复制USDT）</th>', 1)
     scanner.atomic_text(run / 'index.html', page('全市场联合筛选', body))
     scanner.atomic_json(run / 'summary.json', summary)

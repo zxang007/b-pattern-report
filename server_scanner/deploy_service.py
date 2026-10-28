@@ -31,6 +31,7 @@ SERVICE_FILES = (
     "manual_exclusions.py", "test_manual_exclusions.py", "report_exclusions.js", "test_report_exclusions.js",
     "report_mobile.css", "report_mobile.js", "test_report_mobile.js", "scan_retention.py",
     "retest_validity.py", "test_retest_validity.py", "regression_retest_peaks.py",
+    "test_price_freshness.py", "market-pattern-validity.timer",
 )
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "qqbot"]
 
@@ -105,7 +106,7 @@ for unit in ['market-pattern-scanner.service','market-pattern-confirmation.servi
 config=root/'config.json'
 if not config.exists():
     shutil.copyfile(release/'config.json',config);config.chmod(0o600)
-for name in ['market-pattern-scanner.service','market-pattern-scanner.timer','market-pattern-viewer.service','market-pattern-http.service','market-report-certificate.service','market-report-certificate.timer','market-pattern-front.service','market-pattern-confirmation.service']:
+for name in ['market-pattern-scanner.service','market-pattern-scanner.timer','market-pattern-viewer.service','market-pattern-http.service','market-report-certificate.service','market-report-certificate.timer','market-pattern-front.service','market-pattern-confirmation.service','market-pattern-validity.timer']:
     subprocess.run(['sudo','-n','install','-m','644',str(release/name),'/etc/systemd/system/'+name],check=True)
 subprocess.run(['sudo','-n','systemd-analyze','verify','/etc/systemd/system/market-pattern-scanner.service','/etc/systemd/system/market-pattern-scanner.timer','/etc/systemd/system/market-pattern-viewer.service'],check=True)
 current=root/'current'
@@ -114,7 +115,7 @@ if current.is_symlink():
 pending=root/'current.pending';pending.unlink(missing_ok=True);pending.symlink_to(release);pending.replace(current)
 web=root/'web-current.pending';web.unlink(missing_ok=True);web.symlink_to(release);web.replace(root/'web-current')
 subprocess.run(['sudo','-n','systemctl','daemon-reload'],check=True)
-subprocess.run(['sudo','-n','systemctl','enable','--now','market-pattern-scanner.timer','market-pattern-viewer.service','market-pattern-http.service','market-report-certificate.timer','market-pattern-front.service'],check=True)
+subprocess.run(['sudo','-n','systemctl','enable','--now','market-pattern-scanner.timer','market-pattern-viewer.service','market-pattern-http.service','market-report-certificate.timer','market-pattern-front.service','market-pattern-validity.timer'],check=True)
 subprocess.run(['sudo','-n','systemctl','restart','market-pattern-viewer.service','market-pattern-http.service','market-pattern-front.service'],check=True)
 print('ACTIVATED',release.name)
 """

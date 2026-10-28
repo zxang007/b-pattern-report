@@ -47,10 +47,12 @@ def prune_scans(base):
             if (folder.name.startswith("live-") and data.get("status") == "complete"
                     and data.get("stage") == "4h_and_15m" and data.get("validation_ok")
                     and (folder / "index.html").is_file()):
-                confirmed.append((data["end_bj_exclusive"], data.get("updated_at_bj", ""), folder, data))
+                confirmed.append((data["end_bj_exclusive"],
+                    data.get("price_checked_through_bj", data["end_bj_exclusive"]),
+                    data.get("updated_at_bj", ""), folder, data))
         if not confirmed:
             raise ValueError("没有完整且通过校验的最新联合扫描，停止清理")
-        _, _, latest, latest_data = max(confirmed, key=lambda item: item[:2])
+        _, _, _, latest, latest_data = max(confirmed, key=lambda item: item[:3])
         source_name = latest_data["source_scope"]
         proof = json.loads((base / "validation/year-fivefold/completed.json").read_text())
         annual_name = proof["scope"]

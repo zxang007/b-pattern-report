@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh candidate validity after each closed fifteen-minute candle
+
+[Timer]
+OnCalendar=*-*-* *:00,15,30,45:30 Asia/Shanghai
+Persistent=true
+AccuracySec=5s
+Unit=market-pattern-confirmation.service
+
+[Install]
+WantedBy=timers.target

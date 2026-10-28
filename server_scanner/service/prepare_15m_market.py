@@ -20,6 +20,14 @@ def stamp(value):
     return int(dt.datetime.strptime(value, '%Y-%m-%d %H:%M').replace(tzinfo=scanner.BJ).timestamp() * 1000)
 
 
+def price_cutoff(source_end, now_ms):
+    """失效检查跟随最新已收盘十五分钟；形态窗口仍由四小时来源决定。"""
+    end = now_ms // INTERVAL * INTERVAL
+    if end < source_end:
+        raise ValueError('服务器时间早于四小时来源，停止更新')
+    return end
+
+
 def gaps(times, first, end):
     start = None
     for value in range(first, end, INTERVAL):
@@ -58,7 +66,8 @@ def prepare(source_scope=None):
             'candidate_symbols': len(begin), 'end_ms_exclusive': int(dt.datetime.fromisoformat(meta['end_bj_exclusive']).timestamp() * 1000),
             'interval': '15m', 'source': 'Binance USD-M /fapi/v1/klines',
             'symbols': [{**info, 'fetch_start_ms': begin.get(info['symbol'])} for info in infos]}
-        scanner.atomic_json(manifest, data)
+    data['price_end_ms_exclusive'] = price_cutoff(data['end_ms_exclusive'], int(time.time() * 1000))
+    scanner.atomic_json(manifest, data)
     path = root / 'fifteen_m.sqlite3'
     assert path.name != 'scanner.sqlite3'
     store = scanner.Store(path)
@@ -67,7 +76,8 @@ def prepare(source_scope=None):
     store.db.execute('PRAGMA user_version=15')
     api = scanner.PublicAPI(20, 3)
     progress = {'status': 'running', 'source_scope': data['source_scope'], 'total_symbols': data['total_symbols'],
-        'candidate_symbols': data['candidate_symbols'], 'completed_symbols': 0, 'skipped_no_4h': 0, 'failed_symbols': [], 'candles': 0}
+        'candidate_symbols': data['candidate_symbols'], 'completed_symbols': 0, 'skipped_no_4h': 0, 'failed_symbols': [], 'candles': 0,
+        'price_end_ms_exclusive': data['price_end_ms_exclusive']}
     started = time.monotonic()
     status_path = root / 'fifteen_m_fetch_status.json'
     for info in data['symbols']:
@@ -77,7 +87,7 @@ def prepare(source_scope=None):
             progress['completed_symbols'] += 1
             continue
         first = max(info['fetch_start_ms'], (info['onboard'] // INTERVAL) * INTERVAL)
-        end = data['end_ms_exclusive']
+        end = data['price_end_ms_exclusive']
         progress['current_symbol'] = symbol
         try:
             existing = store.read(symbol, first, end)

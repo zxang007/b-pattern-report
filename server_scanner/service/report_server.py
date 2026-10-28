@@ -128,9 +128,11 @@ def latest_report(root: Path) -> Path:
         if data.get("status") == "complete" and (path.parent / "index.html").is_file():
             completed.append((data.get("end_bj_exclusive", ""), data.get("updated_at_bj", ""), path.parent))
             if data.get("stage") == "4h_and_15m" and data.get("validation_ok"):
-                confirmed.append((data.get("end_bj_exclusive", ""), data.get("updated_at_bj", ""), path.parent))
+                confirmed.append((data.get("end_bj_exclusive", ""),
+                    data.get("price_checked_through_bj", data.get("end_bj_exclusive", "")),
+                    data.get("updated_at_bj", ""), path.parent))
     if confirmed:
-        return max(confirmed)[2]
+        return max(confirmed)[3]
     return max(completed)[2] if completed else root / "latest"
 
 
@@ -222,7 +224,7 @@ def handler(root: Path, credential: dict | None, redirect_https=False):
                                      lambda match: match[1] + prefix + match[2] + b'"', content)
                     navigation = '<nav><a href="/">最新扫描</a> | <a href="/history">历史扫描与回测</a> | <a href="/status.json">运行状态</a></nav>'.encode()
                     if path in ("/", "/index.html", "/latest/index.html"):
-                        note = "自动扫描：北京时间 00:00、04:00、08:00、12:00、16:00、20:00；扫描期间保留上一轮完整结果。"
+                        note = "四小时形态扫描：北京时间 00、04、08、12、16、20 点；每15分钟更新收盘跌破检查。更新期间保留上一轮完整结果，刷新查看最新。"
                         try:
                             progress = json.loads((root / "status.json").read_text())
                             if progress.get("status") == "running" and progress.get("scope") != target.parent.name:

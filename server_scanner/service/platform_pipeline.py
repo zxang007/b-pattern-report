@@ -13,6 +13,13 @@ from scan_retention import prune_scans
 def main():
     scanner.require_server()
     root = Path('/home/ubuntu/market-pattern-scanner/state')
+    active = subprocess.run(['systemctl', 'is-active', 'market-pattern-scanner.service'],
+        capture_output=True, text=True).stdout.strip()
+    if active in ('active', 'activating', 'reloading'):
+        print('四小时扫描进行中，完成后由成功钩子更新十五分钟报告。', flush=True)
+        return
+    from five_case_gate import ensure_five_cases
+    ensure_five_cases(Path(__file__).resolve().parent, root)
     proof = json.loads((root / 'platform-validated-engine.json').read_text())
     assert proof.get('joint_all_five'), '需要完成五例两周期联合回归'
     sources = []

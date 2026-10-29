@@ -12,17 +12,21 @@ import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import time
 
 
 ROOT = Path("/opt/codex-auto-update")
 PACKAGES = ROOT / "packages"
 BACKUPS = Path("/var/backups/codex-auto-update")
+LEGACY_BACKUPS = Path("/var/backups/codex")
+LEGACY_PACKAGE = Path("/usr/local/lib/node_modules/@openai/codex")
+NPM_CACHE = Path("/var/cache/codex-auto-update/npm")
 STATE = Path("/var/lib/codex-auto-update")
 COMMAND = Path("/usr/local/bin/codex")
 REGISTRY = "https://registry.npmjs.org"
-KEEP = 5
 VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+ARCHIVE_PATTERN = re.compile(r"^codex-(\d+\.\d+\.\d+)-.+\.tar\.gz$")
 
 
 def log(message):
@@ -115,7 +119,7 @@ def stage(version, stamp):
         run([
             "/usr/bin/npm", "install", "--global", "--prefix", str(target),
             f"@openai/codex@{version}", f"--registry={REGISTRY}",
-            "--cache=/var/cache/codex-auto-update/npm", "--no-audit", "--no-fund",
+            f"--cache={NPM_CACHE}", "--no-audit", "--no-fund",
             "--ignore-scripts",
         ], 900)
         verify(target / "bin/codex", version)
@@ -198,19 +202,92 @@ def close_old_sessions(active_version):
     return [pid for pid, _, _ in sessions]
 
 
-def prune():
-    # 只清理本工具创建并带标记的历史目录，始终保留当前版和五个旧版。
-    active = COMMAND.resolve()
+def running_executables():
+    paths = []
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdecimal():
+            continue
+        try:
+            paths.append(Path(os.readlink(proc / "exe").removesuffix(" (deleted)")))
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+    return paths
+
+
+def validate_archive(archive, version):
+    # 兼容首次手工备份的作用域目录和自动备份的包目录。
+    with tarfile.open(archive, "r:gz") as bundle:
+        metadata = None
+        for name in ("codex/package.json", "@openai/codex/package.json"):
+            try:
+                member = bundle.getmember(name)
+            except KeyError:
+                continue
+            if not member.isfile() or member.size > 1024 * 1024:
+                raise RuntimeError("回退归档中的包信息不合法")
+            metadata = json.load(bundle.extractfile(member))
+            break
+    if metadata is None:
+        raise RuntimeError("回退归档缺少 Codex 包信息")
+    if metadata.get("name") != "@openai/codex" or metadata.get("version") != version:
+        raise RuntimeError("回退归档版本不匹配，拒绝删除历史安装")
+
+
+def prune(active_version):
+    # 当前版仅保留正在使用的安装，历史版只保留上一个不同版本的压缩归档。
+    active = COMMAND.resolve(strict=True)
+    archives = []
+    for parent in (BACKUPS, LEGACY_BACKUPS):
+        for archive in parent.glob("codex-*.tar.gz"):
+            match = ARCHIVE_PATTERN.fullmatch(archive.name)
+            if match and not archive.is_symlink() and archive.is_file():
+                version = match.group(1)
+                version_tuple(version)
+                archives.append((archive, version))
+    eligible = [(path, version) for path, version in archives if version_tuple(version) < version_tuple(active_version)]
+    previous = max(eligible, key=lambda item: (version_tuple(item[1]), item[0].stat().st_mtime), default=None)
     history = []
     for directory in PACKAGES.iterdir() if PACKAGES.exists() else ():
         if directory.is_symlink() or not directory.is_dir() or not (directory / ".codex-managed.json").is_file():
             continue
         if not active.is_relative_to(directory):
+            metadata = json.loads((directory / ".codex-managed.json").read_text())
+            version_tuple(metadata["version"])
+            if version_tuple(metadata["version"]) < version_tuple(active_version) and (previous is None or version_tuple(metadata["version"]) > version_tuple(previous[1])):
+                raise RuntimeError("尚无可验证的上一个版本归档，暂不删除历史安装")
             history.append(directory)
-    for directory in sorted(history, key=lambda item: item.stat().st_mtime, reverse=True)[KEEP:]:
+    legacy_removable = False
+    if not LEGACY_PACKAGE.is_symlink() and (LEGACY_PACKAGE / "package.json").is_file() and not active.is_relative_to(LEGACY_PACKAGE):
+        metadata = json.loads((LEGACY_PACKAGE / "package.json").read_text())
+        if metadata.get("name") == "@openai/codex" and version_tuple(metadata["version"]) <= version_tuple(active_version):
+            if version_tuple(metadata["version"]) < version_tuple(active_version) and (previous is None or version_tuple(metadata["version"]) > version_tuple(previous[1])):
+                raise RuntimeError("尚无可验证的上一个版本归档，暂不删除原安装")
+            legacy_removable = True
+    retained = None
+    if previous:
+        path, version = previous
+        validate_archive(path, version)
+        BACKUPS.mkdir(parents=True, exist_ok=True)
+        retained = BACKUPS / path.name
+        if retained != path:
+            os.replace(path, retained)
+        log(f"保留唯一回退版本：{version}，归档={retained}")
+    in_use = running_executables()
+    for directory in history + ([LEGACY_PACKAGE] if legacy_removable else []):
+        if any(executable.is_relative_to(directory) for executable in in_use):
+            log(f"安装仍被进程使用，留待下次清理：{directory}")
+            continue
         shutil.rmtree(directory)
-    for archive in sorted(BACKUPS.glob("codex-*.tar.gz"), key=lambda item: item.stat().st_mtime, reverse=True)[KEEP:]:
-        archive.unlink()
+        log(f"已删除闲置安装：{directory}")
+    for archive, _ in archives:
+        if archive != retained and (previous is None or archive != previous[0]):
+            archive.unlink(missing_ok=True)
+            log(f"已删除多余备份：{archive.name}")
+    cache = NPM_CACHE / "_cacache"
+    if cache.is_dir() and not cache.is_symlink():
+        shutil.rmtree(cache)
+        log("已清理本更新器的 npm 下载缓存")
+    return {"version": previous[1], "archive": str(retained)} if previous else None
 
 
 def main():
@@ -229,7 +306,7 @@ def main():
         current = installed_version()
         latest = json.loads(run([
             "/usr/bin/npm", "view", "@openai/codex", "dist-tags.latest", "--json",
-            f"--registry={REGISTRY}", "--cache=/var/cache/codex-auto-update/npm",
+            f"--registry={REGISTRY}", f"--cache={NPM_CACHE}",
         ], 120))
         version_tuple(latest)
         log(f"稳定版检查：当前={current}，最新={latest}")
@@ -252,8 +329,8 @@ def main():
         # 仅在当前入口验证成功后关闭旧版进程，版本回退时也不关闭更高版本进程。
         result["closed_pids"] = close_old_sessions(current)
         result["active_version"] = current
+        result["rollback_backup"] = prune(current)
         write_state(result)
-        prune()
         log("检查和验证完成")
 
 

@@ -1,11 +1,48 @@
 """验证版本筛选、进程范围和原子切换失败回退。"""
 
 from pathlib import Path
+from contextlib import ExitStack, contextmanager
+import io
+import json
+import os
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import mock_open, patch
 
 import updater
+
+
+@contextmanager
+def retention_environment():
+    with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+        root = Path(directory)
+        for name in ("PACKAGES", "BACKUPS", "LEGACY_BACKUPS", "LEGACY_PACKAGE", "NPM_CACHE"):
+            path = root / name.lower()
+            path.mkdir()
+            stack.enter_context(patch.object(updater, name, path))
+        command = root / "codex"
+        stack.enter_context(patch.object(updater, "COMMAND", command))
+        stack.enter_context(patch.object(updater, "running_executables", return_value=[]))
+        yield command
+
+
+def fake_install(version, stamp):
+    package = updater.PACKAGES / f"{version}-{stamp}"
+    package.mkdir()
+    (package / ".codex-managed.json").write_text(json.dumps({"version": version}))
+    (package / "codex").touch()
+    return package
+
+
+def fake_archive(parent, version, stamp, *, legacy=False):
+    path = parent / f"codex-{version}-{stamp}.tar.gz"
+    content = json.dumps({"name": "@openai/codex", "version": version}).encode()
+    with tarfile.open(path, "w:gz") as bundle:
+        member = tarfile.TarInfo(("@openai/" if legacy else "") + "codex/package.json")
+        member.size = len(content)
+        bundle.addfile(member, io.BytesIO(content))
+    return path
 
 
 class UpdaterTests(unittest.TestCase):
@@ -75,6 +112,79 @@ class UpdaterTests(unittest.TestCase):
         with patch.object(updater, "old_sessions", return_value=[(123, identity, "0.163.0")]), patch.object(updater, "same_process", return_value=False), patch.object(updater.os, "kill") as kill:
             updater.close_old_sessions("0.165.0")
             kill.assert_not_called()
+
+    def test_retention_keeps_only_previous_distinct_version(self):
+        with retention_environment() as command:
+            current = fake_install("0.165.0", "current")
+            older = fake_install("0.163.0", "older")
+            previous = fake_install("0.164.0", "previous")
+            command.symlink_to(current / "codex")
+            legacy = updater.LEGACY_PACKAGE
+            (legacy / "package.json").write_text(json.dumps({"name": "@openai/codex", "version": "0.165.0"}))
+            duplicate = fake_archive(updater.BACKUPS, "0.165.0", "duplicate")
+            too_old = fake_archive(updater.BACKUPS, "0.163.0", "older")
+            retained = fake_archive(updater.LEGACY_BACKUPS, "0.164.0", "previous", legacy=True)
+            os.utime(too_old, (1000, 1000))
+            os.utime(retained, (100, 100))
+            unrelated = updater.BACKUPS / "unrelated.txt"
+            unrelated.touch()
+            cache = updater.NPM_CACHE / "_cacache"
+            cache.mkdir()
+            (cache / "old-package").touch()
+            updater.prune("0.165.0")
+            self.assertTrue(current.exists())
+            self.assertFalse(older.exists())
+            self.assertFalse(previous.exists())
+            self.assertFalse(legacy.exists())
+            self.assertFalse(duplicate.exists())
+            self.assertFalse(too_old.exists())
+            self.assertEqual(list(updater.BACKUPS.glob("*.tar.gz")), [updater.BACKUPS / retained.name])
+            self.assertTrue(unrelated.exists())
+            self.assertFalse(cache.exists())
+            updater.prune("0.165.0")
+            self.assertTrue(command.exists())
+
+    def test_corrupt_previous_archive_prevents_cleanup(self):
+        with retention_environment() as command:
+            current = fake_install("0.165.0", "current")
+            previous = fake_install("0.164.0", "previous")
+            command.symlink_to(current / "codex")
+            archive = updater.BACKUPS / "codex-0.164.0-corrupt.tar.gz"
+            archive.write_bytes(b"invalid")
+            duplicate = fake_archive(updater.BACKUPS, "0.165.0", "duplicate")
+            with self.assertRaises(tarfile.ReadError):
+                updater.prune("0.165.0")
+            self.assertTrue(current.exists())
+            self.assertTrue(previous.exists())
+            self.assertTrue(duplicate.exists())
+
+    def test_in_use_installation_waits_for_exit(self):
+        with retention_environment() as command:
+            current = fake_install("0.165.0", "current")
+            previous = fake_install("0.164.0", "previous")
+            command.symlink_to(current / "codex")
+            fake_archive(updater.BACKUPS, "0.164.0", "previous")
+            with patch.object(updater, "running_executables", return_value=[previous / "codex"]):
+                updater.prune("0.165.0")
+            self.assertTrue(previous.exists())
+            updater.prune("0.165.0")
+            self.assertFalse(previous.exists())
+
+    def test_missing_previous_archive_preserves_installation(self):
+        with retention_environment() as command:
+            current = fake_install("0.165.0", "current")
+            previous = fake_install("0.164.0", "previous")
+            command.symlink_to(current / "codex")
+            fake_archive(updater.BACKUPS, "0.163.0", "too-old")
+            with self.assertRaises(RuntimeError):
+                updater.prune("0.165.0")
+            self.assertTrue(previous.exists())
+
+    def test_previous_archive_metadata_must_match_version(self):
+        with retention_environment():
+            archive = fake_archive(updater.BACKUPS, "0.164.0", "previous")
+            with self.assertRaises(RuntimeError):
+                updater.validate_archive(archive, "0.163.0")
 
 
 if __name__ == "__main__":

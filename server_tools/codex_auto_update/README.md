@@ -6,9 +6,10 @@
 
 - 更新器：`/opt/codex-auto-update/updater-current/`，指向经过远端测试的 `updater-releases/` 目录。
 - Codex 包：`/opt/codex-auto-update/packages/`。
-- 旧包备份：`/var/backups/codex-auto-update/`，保留最近五份成功备份。
-- 原安装目录：`/usr/local/lib/node_modules/@openai/codex/`，首次接管后继续保留。
-- 管理目录保留当前安装及五个历史安装；只清理本工具带标记的历史目录。
+- 旧包备份：`/var/backups/codex-auto-update/`，只保留上一个不同版本的一份压缩归档。同版本重复备份及更早版本归档在成功验证后删除。
+- 旧备份目录 `/var/backups/codex/` 中的上一个版本会迁入统一备份目录。
+- 管理目录仅保留当前安装；历史安装目录及已接管的原 npm 安装在确认闲置后删除。仍被进程使用的安装在退出后再清理。
+- 成功验证后清空本更新器专用的 npm 下载缓存，避免旧安装包另行累积。
 - 最近成功结果：`/var/lib/codex-auto-update/last-result.json`；失败详情查看系统日志。
 - 定时任务使用互斥锁；停机错过检查后由 systemd 补跑。
 - 不需要 Codex 登录凭据，不执行对话、行情请求或消息发送。
@@ -27,4 +28,4 @@ ssh qqbot 'cat /var/lib/codex-auto-update/last-result.json; codex --version'
 
 更新代码顺序为：本机静态检查，上传新更新器版本目录，在 qqbot 运行 `python3 -m unittest -v test_updater.py` 和 `systemd-analyze verify`，验证通过后原子切换 `updater-current`，最后备份源码到 GitHub 的 `server_tools/codex_auto_update/`。不改仓库已有自动任务。
 
-回退 CLI 时，可将 `/usr/local/bin/codex` 原子改回保留的旧版 `bin/codex`；回退更新器时，将 `updater-current` 原子改回旧更新器目录。备份归档只包含程序 npm 包，不包含用户配置和会话材料。
+回退 CLI 时，将保留的旧归档解压到新的隔离目录，恢复 `bin/codex` 到包内 `bin/codex.js` 的符号链接，验证版本后原子切换 `/usr/local/bin/codex`。回退更新器时，将 `updater-current` 原子改回旧更新器目录。备份归档只包含程序 npm 包，不包含用户配置和会话材料。

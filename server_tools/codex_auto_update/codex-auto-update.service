@@ -1,0 +1,19 @@
+[Unit]
+Description=Codex CLI 稳定版自动更新与旧会话关闭
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 /opt/codex-auto-update/updater-current/updater.py
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+UMask=0022
+TimeoutStartSec=25min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUQuota=50%
+MemoryMax=512M
+StandardOutput=journal
+StandardError=journal

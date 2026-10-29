@@ -1,0 +1,11 @@
+[Unit]
+Description=每天北京时间 05:10 检查 Codex CLI 最新稳定版
+
+[Timer]
+OnCalendar=*-*-* 05:10:00 Asia/Shanghai
+Persistent=true
+AccuracySec=1min
+Unit=codex-auto-update.service
+
+[Install]
+WantedBy=timers.target
